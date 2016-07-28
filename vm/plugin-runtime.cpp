@@ -255,14 +255,11 @@ PluginRuntime::UpdateNativeBinding(uint32_t index, SPVM_NATIVE_FUNC pfn, uint32_
 
   NativeEntry* native = &natives_[index];
 
-  // The native must either be unbound, or it must be ephemeral or optional.
-  // Otherwise, we've already baked its address in at callsites and it's too
-  // late to fix them.
-  if (native->status == SP_NATIVE_BOUND &&
-      !(native->flags & (SP_NTVFLAG_OPTIONAL|SP_NTVFLAG_EPHEMERAL)))
-  {
+  // The native must either be unbound, or it must be immutable. Otherwise
+  // we've already baked its address in at callsites and it's too late to fix
+  // them.
+  if (native->status == SP_NATIVE_BOUND && (native->flags & SP_NTVFLAG_IMMUTABLE))
     return SP_ERROR_PARAM;
-  }
 
   native->legacy_fn = pfn;
   native->status = pfn

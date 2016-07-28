@@ -1295,7 +1295,7 @@ Compiler::emitLegacyNativeCall(uint32_t native_index, NativeEntry* native)
 
   // Check whether the native is bound.
   bool immutable = native->status == SP_NATIVE_BOUND &&
-                   !(native->flags & (SP_NTVFLAG_EPHEMERAL|SP_NTVFLAG_OPTIONAL));
+                   (native->flags & SP_NTVFLAG_IMMUTABLE);
   if (!immutable) {
     __ movl(edx, Operand(ExternalAddress(&native->legacy_fn)));
     __ testl(edx, edx);

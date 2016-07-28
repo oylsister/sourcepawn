@@ -153,8 +153,13 @@ typedef struct sp_pubvar_s
 #define SP_NATIVE_UNBOUND		(0)		/**< Native is undefined */
 #define SP_NATIVE_BOUND			(1)		/**< Native is bound */
 
-#define SP_NTVFLAG_OPTIONAL		(1<<0)	/**< Native is optional */
-#define SP_NTVFLAG_EPHEMERAL		(1<<1)	/**< Native can be unbound */
+// These two native flags are reserved and should not be used.
+static const uint32_t SP_NTVFLAG_RESERVED0 = 0x00000001;
+static const uint32_t SP_NTVFLAG_RESERVED1 = 0x00000002;
+
+// The native binding is immutable. After adding this flag, the native cannot
+// be reconfigured, rebound, or unbound.
+static const uint32_t SP_NTVFLAG_IMMUTABLE = 0x00000004;
 
 /** 
  * @brief Information about a native entry in a plugin.

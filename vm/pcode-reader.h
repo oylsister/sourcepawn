@@ -471,9 +471,7 @@ class PcodeReader
       cell_t nparams = readCell();
 
       NativeEntry* native = rt_->NativeAt(index);
-      if (native->status == SP_NATIVE_BOUND &&
-          !(native->flags & (SP_NTVFLAG_EPHEMERAL|SP_NTVFLAG_OPTIONAL)))
-      {
+      if (native->status == SP_NATIVE_BOUND && (native->flags & SP_NTVFLAG_IMMUTABLE)) {
         uint32_t replacement = rt_->GetNativeReplacement(index);
         if (replacement != OP_NOP)
           return visitOp((OPCODE)replacement);
