@@ -114,10 +114,8 @@ bool Semantics::CheckStmt(Stmt* stmt, StmtFlags flags) {
             return CheckForStmt(stmt->to<ForStmt>());
         case AstKind::SwitchStmt:
             return CheckSwitchStmt(stmt->to<SwitchStmt>());
-        case AstKind::FunctionDecl: {
-            auto decl = stmt->to<FunctionDecl>();
-            return CheckFunctionInfo(decl->info());
-        }
+        case AstKind::FunctionDecl:
+            return CheckFunctionDecl(stmt->to<FunctionDecl>());
         case AstKind::EnumStructDecl:
             return CheckEnumStructDecl(stmt->to<EnumStructDecl>());
         case AstKind::MethodmapDecl:
@@ -1930,14 +1928,14 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
 
     call->set_sym(sym);
 
-    auto info = sym->function()->node;
-    if (info &&
-        (info->decl().type.numdim() > 0 || info->maybe_returns_array()) &&
+    auto fun = sym->function()->node;
+    if (fun &&
+        (fun->decl().type.numdim() > 0 || fun->maybe_returns_array()) &&
         !sym->array_return())
     {
         // We need to know the size of the returned array. Recursively analyze
         // the function.
-        if (info->is_analyzing() || !CheckFunctionInfo(info)) {
+        if (fun->is_analyzing() || !CheckFunctionDecl(fun)) {
             report(call, 411);
             return false;
         }
@@ -2990,12 +2988,12 @@ ReportFunctionReturnError(symbol* sym)
 }
 
 bool
-FunctionInfo::IsVariadic() const
+FunctionDecl::IsVariadic() const
 {
     return !args_.empty() && args_.back()->type().ident == iVARARGS;
 }
 
-bool Semantics::CheckFunctionInfo(FunctionInfo* info) {
+bool Semantics::CheckFunctionDecl(FunctionDecl* info) {
     // We could have been analyzed recursively to derive return array sizes.
     if (info->is_analyzed())
         return info->analysis_status();
@@ -3003,13 +3001,13 @@ bool Semantics::CheckFunctionInfo(FunctionInfo* info) {
     assert(!info->is_analyzing());
 
     info->set_is_analyzing(true);
-    info->set_analyzed(CheckFunctionInfoImpl(info));
+    info->set_analyzed(CheckFunctionDeclImpl(info));
     info->set_is_analyzing(false);
 
     return info->analysis_status();
 }
 
-bool Semantics::CheckFunctionInfoImpl(FunctionInfo* info) {
+bool Semantics::CheckFunctionDeclImpl(FunctionDecl* info) {
     SemaContext sc(*sc_, info->sym(), info);
     ke::SaveAndSet<SemaContext*> push_sc(&sc_, &sc);
 
@@ -3088,7 +3086,7 @@ bool Semantics::CheckFunctionInfoImpl(FunctionInfo* info) {
     return true;
 }
 
-void Semantics::CheckFunctionReturnUsage(FunctionInfo* info) {
+void Semantics::CheckFunctionReturnUsage(FunctionDecl* info) {
     auto sym = info->sym();
     if (sym->returns_value && sym->always_returns)
         return;
@@ -3179,7 +3177,7 @@ SwitchStmt::ProcessUses(SemaContext& sc)
 }
 
 void
-FunctionInfo::ProcessUses(SemaContext& outer_sc)
+FunctionDecl::ProcessUses(SemaContext& outer_sc)
 {
     if (!body_)
         return;
@@ -3190,12 +3188,6 @@ FunctionInfo::ProcessUses(SemaContext& outer_sc)
         arg->ProcessUses(sc);
 
     body_->ProcessUses(sc);
-}
-
-void
-FunctionDecl::ProcessUses(SemaContext& sc)
-{
-    info_->ProcessUses(sc);
 }
 
 bool Semantics::CheckPragmaUnusedStmt(PragmaUnusedStmt* stmt) {
@@ -3232,9 +3224,9 @@ bool Semantics::CheckMethodmapDecl(MethodmapDecl* decl) {
     bool ok = true;
     for (const auto& prop : decl->properties()) {
         if (prop->getter)
-            ok &= CheckFunctionInfo(prop->getter);
+            ok &= CheckFunctionDecl(prop->getter);
         if (prop->setter)
-            ok &= CheckFunctionInfo(prop->setter);
+            ok &= CheckFunctionDecl(prop->setter);
     }
     for (const auto& method : decl->methods())
         ok &= CheckStmt(method->decl);
