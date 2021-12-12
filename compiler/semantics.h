@@ -216,11 +216,15 @@ class Semantics final
     bool CheckAssignmentLHS(BinaryExpr* expr);
     bool CheckAssignmentRHS(BinaryExpr* expr);
 
+    struct ParamState {
+        std::vector<Expr*> argv;
+    };
+
     bool CheckArrayDeclaration(VarDecl* decl);
     bool CheckExprForArrayInitializer(Expr* expr);
     bool CheckNewArrayExprForArrayInitializer(NewArrayExpr* expr);
     bool CheckArgument(CallExpr* call, arginfo* arg, Expr* expr,
-                       std::vector<ComputedArg>* argv, unsigned int argpos);
+                       ParamState* ps, unsigned int argpos);
     symbol* BindNewTarget(Expr* target);
     symbol* BindCallTarget(CallExpr* call, Expr* target);
 

@@ -385,6 +385,8 @@ bool Semantics::CheckExpr(Expr* expr) {
             return CheckTaggedValueExpr(expr->to<TaggedValueExpr>());
         case AstKind::SizeofExpr:
             return CheckSizeofExpr(expr->to<SizeofExpr>());
+        case AstKind::NamedArgExpr:
+            return CheckExpr(expr->to<NamedArgExpr>()->expr);
         default:
             assert(false);
 
@@ -1906,7 +1908,7 @@ CallUserOpExpr::ProcessUses(SemaContext& sc)
 }
 
 DefaultArgExpr::DefaultArgExpr(const token_pos_t& pos, arginfo* arg)
-  : EmitOnlyExpr(AstKind::DefaultArgExpr, pos),
+  : Expr(AstKind::DefaultArgExpr, pos),
     arg_(arg)
 {
     // Leave val bogus, it doesn't participate in anything, and we can't
@@ -1957,7 +1959,7 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
         report(call, 234) << sym->name() << ptr; /* deprecated (probably a native function) */
     }
 
-    std::vector<ComputedArg> argv;
+    ParamState ps;
 
     unsigned int nargs = 0;
     unsigned int argidx = 0;
@@ -1967,7 +1969,7 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
             report(call->implicit_this(), 92);
             return false;
         }
-        if (!CheckArgument(call, &arglist[0], call->implicit_this(), &argv, 0))
+        if (!CheckArgument(call, &arglist[0], call->implicit_this(), &ps, 0))
             return false;
         nargs++;
         argidx++;
@@ -1976,10 +1978,10 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
     bool namedparams = false;
     for (const auto& param : call->args()) {
         unsigned int argpos;
-        if (param.name) {
-            int pos = findnamedarg(arglist, param.name);
+        if (auto named = param->as<NamedArgExpr>()) {
+            int pos = findnamedarg(arglist, named->name);
             if (pos < 0) {
-                report(call, 17) << param.name;
+                report(call, 17) << named->name;
                 break;
             }
             argpos = pos;
@@ -1991,7 +1993,7 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
             }
             argpos = nargs;
             if (argidx >= arglist.size()) {
-                report(param.expr, 92);
+                report(param->pos(), 92);
                 return false;
             }
         }
@@ -2000,20 +2002,16 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
             report(call, 45); // too many function arguments
             return false;
         }
-        if (argpos < argv.size() && argv[argpos].expr) {
+        if (argpos < ps.argv.size() && ps.argv[argpos]) {
             report(call, 58); // argument already set
             return false;
         }
-        // Note: we don't do this in ProcessArg, since we don't want to double-call
-        // analyze on implicit_this (Analyze is not idempotent).
-        if (param.expr && !CheckExpr(param.expr))
-            return false;
 
         // Add the argument to |argv| and perform type checks.
-        if (!CheckArgument(call, &arglist[argidx], param.expr, &argv, argpos))
+        if (!CheckArgument(call, &arglist[argidx], param, &ps, argpos))
             return false;
 
-        assert(argv[argpos].expr != nullptr);
+        assert(ps.argv[argpos] != nullptr);
         nargs++;
 
         // Don't iterate past terminators (0 or varargs).
@@ -2037,32 +2035,38 @@ bool Semantics::CheckCallExpr(CallExpr* call) {
         auto& arg = arglist[argidx];
         if (arg.type.ident == iVARARGS)
             break;
-        if (argidx >= argv.size() || !argv[argidx].expr) {
-            if (!CheckArgument(call, &arg, nullptr, &argv, argidx))
+        if (argidx >= ps.argv.size() || !ps.argv[argidx]) {
+            if (!CheckArgument(call, &arg, nullptr, &ps, argidx))
                 return false;
         }
 
-        Expr* expr = argv[argidx].expr;
+        Expr* expr = ps.argv[argidx];
         if (expr->as<DefaultArgExpr>() && arg.type.ident == iVARIABLE) {
             UserOperation userop;
             if (find_userop(*sc_, 0, arg.def->tag, arg.type.tag(), 2, nullptr, &userop))
-                argv[argidx].expr = new CallUserOpExpr(userop, expr);
+                ps.argv[argidx] = new CallUserOpExpr(userop, expr);
         }
     }
 
-    new (&call->argv()) PoolArray<ComputedArg>(argv);
+    // Copy newly deduced argument information.
+    if (call->args().size() == ps.argv.size()) {
+        for (size_t i = 0; i < ps.argv.size(); i++)
+            call->args()[i] = ps.argv[i];
+    } else {
+        new (&call->args()) PoolArray<Expr*>(ps.argv);
+    }
     return true;
 }
 
 bool Semantics::CheckArgument(CallExpr* call, arginfo* arg, Expr* param,
-                              std::vector<ComputedArg>* argv, unsigned int pos)
+                              ParamState* ps, unsigned int pos)
 {
-    while (pos >= argv->size())
-        argv->push_back(ComputedArg{});
+    while (pos >= ps->argv.size())
+        ps->argv.push_back(nullptr);
 
     unsigned int visual_pos = call->implicit_this() ? pos : pos + 1;
 
-    if (!param) {
+    if (!param || param->as<DefaultArgExpr>()) {
         if (arg->type.ident == 0 || arg->type.ident == iVARARGS) {
             report(call, 92); // argument count mismatch
             return false;
@@ -2072,16 +2076,25 @@ bool Semantics::CheckArgument(CallExpr* call, arginfo* arg, Expr* param,
             return false;
         }
 
+        if (!param)
+            param = new DefaultArgExpr(call->pos(), arg);
+        else
+            param->as<DefaultArgExpr>()->set_arg(arg);
+
         // The rest of the code to handle default values is in DoEmit.
-        argv->at(pos).expr = new DefaultArgExpr(call->pos(), arg);
-        argv->at(pos).arg = arg;
+        ps->argv[pos] = param;
 
         if (arg->type.ident == iREFERENCE ||
             (arg->type.ident == iREFARRAY && !arg->type.is_const && arg->def->array))
         {
-            NeedsHeapAlloc(argv->at(pos).expr);
+            NeedsHeapAlloc(ps->argv[pos]);
         }
         return true;
+    }
+
+    if (param != call->implicit_this()) {
+        if (!CheckExpr(param))
+            return false;
     }
 
     AutoErrorPos aep(param->pos());
@@ -2246,19 +2259,15 @@ bool Semantics::CheckArgument(CallExpr* call, arginfo* arg, Expr* param,
             break;
     }
 
-    argv->at(pos).expr = param;
-    argv->at(pos).arg = arg;
+    ps->argv[pos] = param;
     return true;
 }
 
 void
 CallExpr::ProcessUses(SemaContext& sc)
 {
-    for (const auto& arg : argv_) {
-        if (!arg.expr)
-            continue;
-        arg.expr->MarkAndProcessUses(sc);
-    }
+    for (const auto& arg : args_)
+        arg->MarkAndProcessUses(sc);
 }
 
 void

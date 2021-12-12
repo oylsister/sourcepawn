@@ -552,6 +552,9 @@ CodeGenerator::EmitExpr(Expr* expr)
         case AstKind::NewArrayExpr:
             EmitNewArrayExpr(expr->to<NewArrayExpr>());
             break;
+        case AstKind::NamedArgExpr:
+            EmitExpr(expr->to<NamedArgExpr>()->expr);
+            break;
 
         default:
             assert(false);
@@ -1172,10 +1175,10 @@ CodeGenerator::EmitCallExpr(CallExpr* call)
         TrackTempHeapAlloc(call, 1);
     }
 
-    const auto& argv = call->argv();
+    const auto& argv = call->args();
+    const auto& arginfov = call->sym()->function()->args;
     for (size_t i = argv.size() - 1; i < argv.size(); i--) {
-        const auto& expr = argv[i].expr;
-        const auto& arg = argv[i].arg;
+        const auto& expr = argv[i];
 
         EmitExpr(expr);
 
@@ -1186,6 +1189,14 @@ CodeGenerator::EmitCallExpr(CallExpr* call)
 
         const auto& val = expr->val();
         bool lvalue = expr->lvalue();
+
+        const arginfo* arg;
+        if (i < arginfov.size()) {
+            arg = &arginfov[i];
+        } else {
+            arg = &arginfov.back();
+            assert(arg->type.ident == iVARARGS);
+        }
 
         switch (arg->type.ident) {
             case iVARARGS:
