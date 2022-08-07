@@ -124,9 +124,6 @@ symbol::symbol(sp::Atom* symname, cell symaddr, int symident, int symvclass, int
    queued(false),
    explicit_return_type(false),
    x({}),
-   fnumber(0),
-   /* assume global visibility (ignored for local symbols) */
-   lnumber(0),
    documentation(nullptr),
    addr_(symaddr),
    name_(nullptr),
@@ -350,7 +347,7 @@ GetNewNameStatus(SemaContext& sc, sp::Atom* name, int vclass)
 }
 
 bool
-CheckNameRedefinition(SemaContext& sc, sp::Atom* name, const token_pos_t& pos, int vclass)
+CheckNameRedefinition(SemaContext& sc, sp::Atom* name, const SourceLocation& pos, int vclass)
 {
     auto name_status = GetNewNameStatus(sc, name, vclass);
     if (name_status == NewNameStatus::Duplicated) {
@@ -363,11 +360,12 @@ CheckNameRedefinition(SemaContext& sc, sp::Atom* name, const token_pos_t& pos, i
 }
 
 static symbol*
-NewConstant(sp::Atom* name, const token_pos_t& pos, cell val, int vclass, int tag)
+NewConstant(sp::Atom* name, const SourceLocation& pos, cell val, int vclass, int tag)
 {
     auto sym = new symbol(name, val, iCONSTEXPR, vclass, tag);
-    sym->fnumber = pos.file;
-    sym->lnumber = pos.line;
+    // :TODO:
+    //sym->fnumber = pos.file;
+    //sym->lnumber = pos.line;
     sym->defined = true;
     return sym;
 }
@@ -388,7 +386,7 @@ DefineConstant(CompileContext& cc, sp::Atom* name, cell val, int tag)
 }
 
 symbol*
-DefineConstant(SemaContext& sc, sp::Atom* name, const token_pos_t& pos, cell val, int vclass,
+DefineConstant(SemaContext& sc, sp::Atom* name, const SourceLocation& pos, cell val, int vclass,
                int tag)
 {
     auto sym = NewConstant(name, pos, val, vclass, tag);

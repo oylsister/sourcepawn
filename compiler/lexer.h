@@ -33,9 +33,8 @@ class CompileContext;
 class Type;
 
 struct token_pos_t {
-    int file = 0;
     int line = 0;
-    int col = 0;
+    SourceLocation loc;
 };
 
 struct full_token_t {
@@ -43,6 +42,7 @@ struct full_token_t {
     int value = 0;
     std::string data;
     sp::Atom* atom = nullptr;
+    int file = 0;
     token_pos_t start;
     token_pos_t end;
 };
@@ -310,8 +310,8 @@ class Lexer
     full_token_t* current_token() {
         return &token_buffer_->tokens[token_buffer_->cursor];
     }
-    const token_pos_t stream_loc() const;
-    const token_pos_t& pos() { return current_token()->start; }
+    SourceLocation stream_loc() const;
+    SourceLocation pos() { return current_token()->start.loc; }
     std::string& deprecate() { return deprecate_; }
     bool& allow_tags() { return allow_tags_; }
     int& require_newdecls() { return state_.require_newdecls; }
@@ -342,7 +342,7 @@ class Lexer
     void LexSymbol(full_token_t* tok, sp::Atom* atom);
     bool MaybeHandleLineContinuation();
     bool PlungeQualifiedFile(const char* name);
-    full_token_t* PushSynthesizedToken(TokenKind kind, int col);
+    full_token_t* PushSynthesizedToken(TokenKind kind, const SourceLocation& loc);
     void SynthesizeIncludePathToken();
     void SetFileDefines(std::string file);
     void EnterFile(std::shared_ptr<SourceFile>&& fp);
@@ -408,7 +408,6 @@ class Lexer
         assert(pos <= state_.end);
         state_.pos = pos;
     }
-    unsigned int column() const { return (unsigned)(state_.pos - state_.line_start); }
     cell get_utf8_char();
 
   private:
@@ -463,7 +462,7 @@ class Lexer
         LexerState& operator =(LexerState&&) = default;
 
         std::shared_ptr<SourceFile> inpf;
-        LREntry inpf_loc;
+        LREntry source_range;
         // Visual line in the file.
         int fline = 0;
         // Line # for token processing.

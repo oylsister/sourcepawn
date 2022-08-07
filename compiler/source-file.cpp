@@ -64,55 +64,49 @@ SourceFile::Open(const std::string& file_name)
     return true;
 }
 
-bool
-SourceFile::Read(unsigned char* target, int maxchars)
-{
-    if (pos_ == data_.size())
-        return false;
-
-    char* outptr = (char*)target;
-    char* outend = outptr + maxchars;
-    while (outptr < outend && pos_ < data_.size()) {
-        char c = data_[pos_++];
-        *outptr++ = c;
-
-        if (c == '\n')
-            break;
-        if (c == '\r') {
-            // Handle CRLF.
-            if (pos_ < data_.size() && data_[pos_] == '\n') {
-                pos_++;
-                if (outptr < outend)
-                    *outptr++ = '\n';
-            } else {
-                // Replace with \n.
-                *(outptr - 1) = '\n';
-            }
-            break;
-        }
-    }
-
-    // Caller passes in a buffer of size >= maxchars+1.
-    *outptr = '\0';
-    return true;
-}
-
-int64_t
-SourceFile::Pos()
-{
+int64_t SourceFile::Pos() {
     return pos_;
 }
 
-void
-SourceFile::Reset(int64_t pos)
-{
-    assert(pos >= 0);
-    assert((size_t)pos <= data_.size());
-    pos_ = (size_t)pos;
-}
-
-int
-SourceFile::Eof()
-{
+int SourceFile::Eof() {
     return pos_ == data_.size();
 }
+
+std::pair<uint32_t, uint32_t> SourceFile::GetLineAndCol(const SourceLocation &loc) {
+    assert(loc.offset() >= location_id_);
+
+    uint32_t pos = loc.offset() - location_id_;
+    if (line_offsets_.empty() || pos < line_offsets_[0])
+        return {(uint32_t)0, pos};
+    if (pos >= line_offsets_.back())
+        return {(uint32_t)line_offsets_.size(), (uint32_t)0};
+
+    uint32_t lower = 0;
+    uint32_t upper = line_offsets_.size();
+    while (lower < upper) {
+        uint32_t index = (lower + upper) / 2;
+        uint32_t line_start = line_offsets_[index];
+        if (pos < line_start) {
+            upper = index;
+            continue;
+        }
+
+        // The range should be (start, end].
+        uint32_t line_end = (index < line_offsets_.size() - 1)
+                            ? line_offsets_[index + 1]
+                            : data_.size();
+        if (pos >= line_end) {
+            lower = index + 1;
+            continue;
+        }
+
+        // Either the id is the first character of a line, or before the first
+        // character of the next line, or it should be the terminal offset.
+        assert(pos >= line_start && pos < line_end);
+        return {index + 1, pos - line_start};
+    }
+
+    assert(false);
+    return {(uint32_t)line_offsets_.size(), (uint32_t)0};
+}
+

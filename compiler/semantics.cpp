@@ -404,7 +404,7 @@ bool Semantics::CheckWrappedExpr(Expr* outer, Expr* inner) {
     return true;
 }
 
-CompareOp::CompareOp(const token_pos_t& pos, int token, Expr* expr)
+CompareOp::CompareOp(const SourceLocation& pos, int token, Expr* expr)
   : pos(pos),
     token(token),
     expr(expr),
@@ -691,7 +691,7 @@ BinaryExprBase::ProcessUses(SemaContext& sc)
     right_->MarkAndProcessUses(sc);
 }
 
-BinaryExpr::BinaryExpr(const token_pos_t& pos, int token, Expr* left, Expr* right)
+BinaryExpr::BinaryExpr(const SourceLocation& pos, int token, Expr* left, Expr* right)
   : BinaryExprBase(ExprKind::BinaryExpr, pos, token, left, right)
 {
     oper_tok_ = GetOperToken(token_);
@@ -717,7 +717,7 @@ bool Semantics::CheckBinaryExpr(BinaryExpr* expr) {
 
             // Update the line number as a hack so we can warn that it was never
             // used.
-            sym->lnumber = expr->pos().line;
+            sym->loc = expr->pos();
         } else if (auto* accessor = left->val().accessor) {
             if (!accessor->setter) {
                 report(expr, 152) << accessor->name;
@@ -1967,7 +1967,7 @@ CallUserOpExpr::ProcessUses(SemaContext& sc)
     expr_->MarkAndProcessUses(sc);
 }
 
-DefaultArgExpr::DefaultArgExpr(const token_pos_t& pos, arginfo* arg)
+DefaultArgExpr::DefaultArgExpr(const SourceLocation& pos, arginfo* arg)
   : Expr(ExprKind::DefaultArgExpr, pos),
     arg_(arg)
 {

@@ -28,12 +28,12 @@
 
 #include "label.h"
 #include "sc.h"
+#include "source-location.h"
 #include "stl/stl-unordered-map.h"
 
 class CompileContext;
 class FunctionDecl;
 class SemaContext;
-struct token_pos_t;
 
 struct ReturnArrayInfo : public PoolObject {
     cell_t iv_size;
@@ -159,8 +159,7 @@ struct symbol : public PoolObject
             short level;  /* number of dimensions below this level */
         } array;
     } dim;       /* for 'dimension', both functions and arrays */
-    int fnumber; /* file number in which the symbol is declared */
-    int lnumber; /* line number for the declaration */
+    SourceLocation loc;
     PoolString* documentation; /* optional documentation string */
 
     int addr() const {
@@ -346,9 +345,9 @@ symbol* FindSymbol(SymbolScope* scope, sp::Atom* name, SymbolScope** found = nul
 symbol* FindSymbol(SemaContext& sc, sp::Atom* name, SymbolScope** found = nullptr);
 void DefineSymbol(SemaContext& sc, symbol* sym);
 symbol* DefineConstant(CompileContext& cc, sp::Atom* name, cell val, int tag);
-symbol* DefineConstant(SemaContext& sc, sp::Atom* name, const token_pos_t& pos, cell val,
+symbol* DefineConstant(SemaContext& sc, sp::Atom* name, const SourceLocation& pos, cell val,
                        int vclass, int tag);
-bool CheckNameRedefinition(SemaContext& sc, sp::Atom* name, const token_pos_t& pos, int vclass);
+bool CheckNameRedefinition(SemaContext& sc, sp::Atom* name, const SourceLocation& pos, int vclass);
 
 void markusage(symbol* sym, int usage);
 symbol* NewVariable(sp::Atom* name, cell addr, int ident, int vclass, int tag, int dim[],

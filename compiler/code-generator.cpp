@@ -137,7 +137,7 @@ void
 CodeGenerator::EmitStmt(Stmt* stmt)
 {
     if (func_) {
-        AddDebugLine(stmt->pos().line);
+        // AddDebugLine(stmt->pos().line); :TODO:
         EmitBreak();
     }
 
@@ -1792,7 +1792,7 @@ CodeGenerator::EmitFunctionDecl(FunctionDecl* info)
 
     __ bind(&info->sym()->function()->label);
     __ emit(OP_PROC);
-    AddDebugLine(info->pos().line);
+    //AddDebugLine(info->pos().line); :TODO:
     EmitBreak();
     current_stack_ = 0;
 

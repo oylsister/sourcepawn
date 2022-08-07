@@ -209,7 +209,7 @@ Lexer::SynthesizeIncludePathToken()
 {
     SkipLineWhitespace();
 
-    auto tok = PushSynthesizedToken(tSYN_INCLUDE_PATH, column());
+    auto tok = PushSynthesizedToken(tSYN_INCLUDE_PATH, stream_loc());
 
     char open_c = peek();
     char close_c;
@@ -399,9 +399,9 @@ void Lexer::HandleDirectives() {
 
         case tINCLUDE: /* #include directive */
         case tpTRYINCLUDE: {
-            auto col = current_token()->start.col;
+            auto loc = current_token()->start.loc;
             SynthesizeIncludePathToken();
-            PushSynthesizedToken((TokenKind)tok, col);
+            PushSynthesizedToken((TokenKind)tok, loc);
             break;
         }
         case tpASSERT:
@@ -463,7 +463,7 @@ void Lexer::HandleDirectives() {
                 preproc_expr(&val, NULL);
                 cc_.options()->tabsize = (int)val;
             } else if (current_token()->atom->str() == "unused") {
-                unsigned col = column();
+                auto loc = stream_loc();
                 if (!need_same_line(tSYMBOL))
                     break;
 
@@ -474,7 +474,7 @@ void Lexer::HandleDirectives() {
                     parts.emplace_back(current_token()->atom->str());
                 }
 
-                auto tok = PushSynthesizedToken(tSYN_PRAGMA_UNUSED, col);
+                auto tok = PushSynthesizedToken(tSYN_PRAGMA_UNUSED, loc);
                 tok->data = ke::Join(parts, ",");
             } else {
                 error(207); /* unknown #pragma */
@@ -1320,9 +1320,7 @@ Lexer::advance_token_ptr()
     return current_token();
 }
 
-full_token_t*
-Lexer::PushSynthesizedToken(TokenKind kind, int col)
-{
+full_token_t* Lexer::PushSynthesizedToken(TokenKind kind, const SourceLocation& loc) {
     ke::SaveAndSet<token_buffer_t*> switch_buffer(&token_buffer_, &normal_buffer_);
 
     token_buffer_->num_tokens++;
@@ -1334,8 +1332,8 @@ Lexer::PushSynthesizedToken(TokenKind kind, int col)
     tok->data.clear();
     tok->atom = nullptr;
     tok->start.line = state_.tokline;
-    tok->start.col = col;
-    tok->start.file = state_.inpf->sources_index();
+    tok->start.loc = loc;
+    tok->file = state_.inpf->sources_index();
     tok->end = tok->start;
     lexpush();
     return tok;
@@ -1373,8 +1371,9 @@ int Lexer::LexNewToken() {
             if (IsPreprocessing() && more()) {
                 // We hit the end of the line; preprocessor should not eat more
                 // tokens without a continuation.
+                tok->file = state_.inpf->sources_index();
                 FillTokenPos(&tok->start);
-                FillTokenPos(&tok->end);
+                tok->end = tok->start;
                 return tok->id = tEOL;
             }
             return 0;
@@ -1388,13 +1387,13 @@ int Lexer::LexNewToken() {
 
         tokens_on_line_++;
 
+        tok->file = state_.inpf->sources_index();
         FillTokenPos(&tok->start);
         LexIntoToken(tok);
 
         // Current token may be different if we're in the preproc buffer, so
         // grab it.
         tok = current_token();
-        FillTokenPos(&tok->end);
 
         if (tok->id == tSTRING && !in_string_continuation_) {
             LexStringContinuation();
@@ -1405,13 +1404,18 @@ int Lexer::LexNewToken() {
         }
     } while (tok->id == tENTERED_MACRO);
 
+    FillTokenPos(&tok->end);
+
     return tok->id;
 }
 
 void Lexer::FillTokenPos(token_pos_t* pos) {
     pos->line = state_.tokline;
-    pos->col = (int)(char_stream() - line_start());
-    pos->file = state_.inpf->sources_index();
+    pos->loc = stream_loc();
+}
+
+SourceLocation Lexer::stream_loc() const {
+    return state_.source_range.MakeLoc(state_.pos - state_.start);
 }
 
 void Lexer::LexIntoToken(full_token_t* tok) {
@@ -1949,7 +1953,7 @@ Lexer::peek_same_line()
     // token parsed. If fline == current token's line, we are guaranteed any
     // buffered token is still on the same line.
     if (token_buffer_->depth > 0 &&
-        current_token()->end.file == next_token()->start.file &&
+        current_token()->file == next_token()->file &&
         current_token()->end.line == state_.fline)
     {
         return next_token()->id ? next_token()->id : tEOL;
@@ -1964,11 +1968,8 @@ Lexer::peek_same_line()
 
     // If the next token starts on the line the last token ends, then the next
     // token is considered on the same line.
-    if (next.start.line == current_token()->end.line &&
-        next.start.file == current_token()->end.file)
-    {
+    if (next.start.line == current_token()->end.line && next.file == current_token()->file)
         return next.id;
-    }
 
     return tEOL;
 }
@@ -2004,7 +2005,7 @@ Lexer::require_newline(TerminatorPolicy policy)
 {
     if (policy != TerminatorPolicy::Newline) {
         // Semicolon must be on the same line.
-        auto pos = current_token()->start;
+        auto pos = current_token()->start.loc;
         int next_tok_id = peek_same_line();
         if (next_tok_id == ';') {
             lexpop();
@@ -2320,7 +2321,7 @@ void Lexer::EnterFile(std::shared_ptr<SourceFile>&& sf) {
     auto& cc = CompileContext::get();
 
     state_.inpf = std::move(sf);
-    state_.inpf_loc = cc_.sources()->GetLocationRangeEntryForFile(state_.inpf);
+    state_.source_range = cc_.sources()->GetLocationRangeEntryForFile(state_.inpf);
     state_.need_semicolon = cc.options()->need_semicolon;
     state_.require_newdecls = cc.options()->require_newdecls;
     state_.fline = 1;

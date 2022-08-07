@@ -61,7 +61,7 @@
 
 void report_error(ErrorReport&& report);
 
-AutoErrorPos::AutoErrorPos(const token_pos_t& pos)
+AutoErrorPos::AutoErrorPos(const SourceLocation& pos)
   : reports_(CompileContext::get().reports()),
     pos_(pos)
 {
@@ -166,9 +166,7 @@ MessageBuilder::MessageBuilder(int number)
 MessageBuilder::MessageBuilder(symbol* sym, int number)
   : number_(number)
 {
-    where_.file = sym->fnumber;
-    where_.line = sym->lnumber;
-    where_.col = 0;
+    where_ = sym->loc;
 }
 
 MessageBuilder::MessageBuilder(MessageBuilder&& other)
@@ -202,18 +200,13 @@ MessageBuilder::~MessageBuilder()
     if (disabled_)
         return;
 
-    auto& cc = CompileContext::get();
+    //auto& cc = CompileContext::get();
 
     ErrorReport report;
     report.number = number_;
-    report.fileno = where_.file;
-    report.lineno = std::max(where_.line, 1);
-    if (report.fileno < 0)
-        report.fileno = cc.lexer()->fcurrent();
-    if (report.fileno < cc.sources()->opened_files().size())
-        report.filename = cc.sources()->opened_files().at(report.fileno)->name();
-    else
-        report.filename = cc.options()->source_files[0];
+    report.fileno = 0; /* :TODO */
+    report.lineno = 0; /* :TODO: */
+    report.filename = ""; /* :TODO: */
     report.type = DeduceErrorType(number_);
 
     std::ostringstream out;
@@ -241,24 +234,22 @@ MessageBuilder::~MessageBuilder()
 }
 
 int
-error(const token_pos_t& where, int number, ...)
+error(const SourceLocation& where, int number, ...)
 {
     va_list ap;
     va_start(ap, number);
-    ErrorReport report = ErrorReport::create_va(number, where.file, where.line, ap);
+    ErrorReport report = ErrorReport::create_va(number, where, ap);
     va_end(ap);
 
-    report.lineno = where.line;
     report_error(std::move(report));
     return 0;
 }
 
 int
-error_va(const token_pos_t& where, int number, va_list ap)
+error_va(const SourceLocation& where, int number, va_list ap)
 {
-    ErrorReport report = ErrorReport::create_va(number, where.file, where.line, ap);
+    ErrorReport report = ErrorReport::create_va(number, where, ap);
 
-    report.lineno = where.line;
     report_error(std::move(report));
     return 0;
 }
@@ -268,7 +259,7 @@ error(symbol* sym, int number, ...)
 {
     va_list ap;
     va_start(ap, number);
-    ErrorReport report = ErrorReport::create_va(number, sym->fnumber, sym->lnumber, ap);
+    ErrorReport report = ErrorReport::create_va(number, /*:TODO:*/{}, ap);
     va_end(ap);
 
     report_error(std::move(report));
@@ -276,20 +267,15 @@ error(symbol* sym, int number, ...)
 }
 
 ErrorReport
-ErrorReport::create_va(int number, int fileno, int lineno, va_list ap)
+ErrorReport::create_va(int number, const SourceLocation& loc, va_list ap)
 {
-    auto& cc = CompileContext::get();
+    //auto& cc = CompileContext::get();
 
     ErrorReport report;
     report.number = number;
-    report.fileno = fileno;
-    report.lineno = std::max(lineno, 1);
-    if (report.fileno < 0)
-        report.fileno = cc.lexer()->fcurrent();
-    if (report.fileno < cc.sources()->opened_files().size())
-        report.filename = cc.sources()->opened_files().at(report.fileno)->name();
-    else
-        report.filename = cc.options()->source_files[0];
+    report.fileno = 0; // :TODO:
+    report.lineno = 0; // :TODO:
+    report.filename = ""; // :TODO:
     report.type = DeduceErrorType(number);
 
     const char* prefix = GetErrorTypePrefix(report.type);
@@ -313,7 +299,7 @@ ErrorReport
 ErrorReport::infer_va(int number, va_list ap)
 {
     auto& cc = CompileContext::get();
-    return create_va(number, -1, cc.lexer()->fline(), ap);
+    return create_va(number, cc.lexer()->pos(), ap);
 }
 
 void

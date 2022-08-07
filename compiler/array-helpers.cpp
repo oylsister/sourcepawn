@@ -34,7 +34,7 @@ class ArraySizeResolver
 {
   public:
     ArraySizeResolver(Semantics* sema, VarDecl* decl);
-    ArraySizeResolver(Semantics* sema, const token_pos_t& pos, typeinfo_t* type, int vclass);
+    ArraySizeResolver(Semantics* sema, const SourceLocation& pos, typeinfo_t* type, int vclass);
 
     void Resolve();
 
@@ -47,7 +47,7 @@ class ArraySizeResolver
 
   private:
     Semantics* sema_;
-    const token_pos_t& pos_;
+    const SourceLocation& pos_;
     typeinfo_t* type_;
     Expr* initializer_;
     std::vector<int> computed_;
@@ -73,7 +73,7 @@ ArraySizeResolver::ArraySizeResolver(Semantics* sema, VarDecl* decl)
         es_ = type;
 }
 
-ArraySizeResolver::ArraySizeResolver(Semantics* sema, const token_pos_t& pos, typeinfo_t* type,
+ArraySizeResolver::ArraySizeResolver(Semantics* sema, const SourceLocation& pos, typeinfo_t* type,
                                      int vclass)
   : sema_(sema),
     pos_(pos),
@@ -361,7 +361,7 @@ ResolveArraySize(Semantics* sema, VarDecl* decl)
 }
 
 void
-ResolveArraySize(Semantics* sema, const token_pos_t& pos, typeinfo_t* type, int vclass)
+ResolveArraySize(Semantics* sema, const SourceLocation& pos, typeinfo_t* type, int vclass)
 {
     assert(type->ident == iARRAY);
 
@@ -402,7 +402,7 @@ class FixedArrayValidator final
   private:
     Semantics* sema_;
     VarDecl* decl_;
-    token_pos_t pos_;
+    SourceLocation pos_;
     Expr* init_;
     const typeinfo_t& type_;
     unsigned total_cells_ = 0;

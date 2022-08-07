@@ -123,8 +123,8 @@ class Parser
     Expr* primary();
     Expr* constant();
     Expr* struct_init();
-    Expr* parse_new_array(const token_pos_t& pos, const TypenameInfo& rt);
-    CallExpr* parse_call(const token_pos_t& pos, int tok, Expr* target);
+    Expr* parse_new_array(const SourceLocation& pos, const TypenameInfo& rt);
+    CallExpr* parse_call(const SourceLocation& pos, int tok, Expr* target);
     int nextop(int* opidx, const int* list);
 
     bool consume_line();

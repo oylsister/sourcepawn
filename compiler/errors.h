@@ -43,7 +43,7 @@ enum class ErrorType {
 
 struct ErrorReport {
     static ErrorReport infer_va(int number, va_list ap);
-    static ErrorReport create_va(int number, int fileno, int lineno, va_list ap);
+    static ErrorReport create_va(int number, const SourceLocation& loc, va_list ap);
 
     int number;
     int fileno;
@@ -58,23 +58,23 @@ class ReportManager;
 class AutoErrorPos final
 {
   public:
-    explicit AutoErrorPos(const token_pos_t& pos);
+    explicit AutoErrorPos(const SourceLocation& pos);
     ~AutoErrorPos();
 
-    const token_pos_t& pos() const {
+    const SourceLocation& pos() const {
         return pos_;
     }
 
   private:
     ReportManager* reports_;
-    token_pos_t pos_;
+    SourceLocation pos_;
     AutoErrorPos* prev_;
 };
 
 int error(int number, ...);
 int error(symbol* sym, int number, ...);
-int error(const token_pos_t& where, int number, ...);
-int error_va(const token_pos_t& where, int number, va_list ap);
+int error(const SourceLocation& where, int number, ...);
+int error_va(const SourceLocation& where, int number, va_list ap);
 
 class MessageBuilder
 {
@@ -86,7 +86,7 @@ class MessageBuilder
 
     MessageBuilder(const MessageBuilder& other) = delete;
 
-    MessageBuilder(const token_pos_t& where, int number)
+    MessageBuilder(const SourceLocation& where, int number)
       : where_(where),
         number_(number)
     {}
@@ -117,13 +117,13 @@ class MessageBuilder
     MessageBuilder& operator =(MessageBuilder&& other);
 
   private:
-    token_pos_t where_;
+    SourceLocation where_;
     int number_;
     std::vector<std::string> args_;
     bool disabled_ = false;
 };
 
-static inline MessageBuilder report(const token_pos_t& where, int number) {
+static inline MessageBuilder report(const SourceLocation& where, int number) {
     return MessageBuilder(where, number);
 }
 static inline MessageBuilder report(int number) {

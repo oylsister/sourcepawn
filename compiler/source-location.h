@@ -1,4 +1,4 @@
-// vim: set ts=2 sw=2 tw=99 et:
+// vim: set ts=4 sw=4 tw=99 et:
 // 
 // Copyright (C) 2022 AlliedModders LLC
 // 
@@ -24,68 +24,68 @@
 // of source locations.
 class SourceLocation
 {
-  friend class MacroLexer;
-  friend class SourceFile;
-  friend class SourceManager;
-  friend struct LREntry;
-  friend struct Macro;
+  public:
+   friend class MacroLexer;
+   friend class SourceFile;
+   friend class SourceManager;
+   friend struct LREntry;
+   friend struct Macro;
 
-  static const uint32_t kInMacro = 0x80000000;
+   static const uint32_t kInMacro = 0x80000000;
 
-  static SourceLocation FromFile(uint32_t sourceId, uint32_t offset) {
-    SourceLocation loc;
-    loc.id_ = sourceId + offset;
-    return loc;
-  }
-  static SourceLocation FromMacro(uint32_t sourceId, uint32_t offset) {
-    SourceLocation loc;
-    loc.id_ = sourceId + offset;
-    loc.id_ |= kInMacro;
-    return loc;
-  }
+   static SourceLocation Make(uint32_t sourceId, uint32_t offset, uint32_t macro_bit) {
+       SourceLocation loc;
+       loc.id_ = sourceId + offset;
+       loc.id_ |= macro_bit;
+       return loc;
+   }
 
- public:
-  SourceLocation()
-   : id_(0)
-  {
-  }
+    SourceLocation()
+     : id_(0)
+    {
+    }
 
-  bool IsSet() const {
-    return id_ != 0;
-  }
-  bool operator ==(const SourceLocation& other) {
-    return id_ == other.id_;
-  }
-  bool operator !=(const SourceLocation& other) {
-    return id_ != other.id_;
-  }
+    bool IsSet() const {
+        return id_ != 0;
+    }
+    bool operator ==(const SourceLocation& other) {
+        return id_ == other.id_;
+    }
+    bool operator !=(const SourceLocation& other) {
+        return id_ != other.id_;
+    }
 
-  bool IsInMacro() const {
-    return !!(id_ & kInMacro);
-  }
+    bool IsInMacro() const {
+        return !!(id_ & kInMacro);
+    }
 
-  uint32_t id() const {
-    return id_;
-  }
+    uint32_t id() const {
+        return id_;
+    }
 
- private:
-  uint32_t offset() const {
-    return id_ & ~kInMacro;
-  }
+  private:
+    uint32_t offset() const {
+        return id_ & ~kInMacro;
+    }
 
- private:
-  uint32_t id_;
+  protected:
+    explicit SourceLocation(uint32_t id)
+      : id_(id)
+    {}
+
+  private:
+    uint32_t id_;
 };
 
 struct SourceRange
 {
-  SourceLocation start;
-  SourceLocation end;
+    SourceLocation start;
+    SourceLocation end;
 
-  SourceRange()
-  {}
-  SourceRange(const SourceLocation& start, const SourceLocation& end)
-   : start(start),
-     end(end)
-  {}
+    SourceRange()
+    {}
+    SourceRange(const SourceLocation& start, const SourceLocation& end)
+      : start(start),
+        end(end)
+    {}
 };

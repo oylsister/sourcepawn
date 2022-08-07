@@ -57,7 +57,7 @@ class SemaContext;
 class ParseNode : public PoolObject
 {
   public:
-    explicit ParseNode(const token_pos_t& pos)
+    explicit ParseNode(const SourceLocation& pos)
       : pos_(pos),
         tree_has_heap_allocs_(false)
     {}
@@ -69,7 +69,7 @@ class ParseNode : public PoolObject
         return Bind(sc);
     }
 
-    const token_pos_t& pos() const {
+    const SourceLocation& pos() const {
         return pos_;
     }
 
@@ -77,7 +77,7 @@ class ParseNode : public PoolObject
     void set_tree_has_heap_allocs(bool b) { tree_has_heap_allocs_ = b; }
 
   protected:
-    void error(const token_pos_t& pos, int number, ...);
+    void error(const SourceLocation& pos, int number, ...);
 
   private:
     // Hide this symbol. Calls to error(pos... will get more accurate as we
@@ -85,7 +85,7 @@ class ParseNode : public PoolObject
     void error(int number, ...) = delete;
 
   protected:
-    token_pos_t pos_;
+    SourceLocation pos_;
     bool tree_has_heap_allocs_ : 1;
 };
 
@@ -100,7 +100,7 @@ enum FlowType {
 class Stmt : public ParseNode
 {
   public:
-    explicit Stmt(StmtKind kind, const token_pos_t& pos)
+    explicit Stmt(StmtKind kind, const SourceLocation& pos)
       : ParseNode(pos),
         kind_(kind),
         flow_type_(Flow_None)
@@ -142,7 +142,7 @@ class Stmt : public ParseNode
 class ChangeScopeNode : public Stmt
 {
   public:
-    explicit ChangeScopeNode(const token_pos_t& pos, SymbolScope* scope, const std::string& file)
+    explicit ChangeScopeNode(const SourceLocation& pos, SymbolScope* scope, const std::string& file)
       : Stmt(StmtKind::ChangeScopeNode, pos),
         scope_(scope),
         file_(new PoolString(file))
@@ -165,11 +165,11 @@ class ChangeScopeNode : public Stmt
 class StmtList : public Stmt
 {
   public:
-    explicit StmtList(StmtKind kind, const token_pos_t& pos, const std::vector<Stmt*>& stmts)
+    explicit StmtList(StmtKind kind, const SourceLocation& pos, const std::vector<Stmt*>& stmts)
       : Stmt(kind, pos),
         stmts_(stmts)
     {}
-    explicit StmtList(const token_pos_t& pos, const std::vector<Stmt*>& stmts)
+    explicit StmtList(const SourceLocation& pos, const std::vector<Stmt*>& stmts)
       : Stmt(StmtKind::StmtList, pos),
         stmts_(stmts)
     {}
@@ -210,7 +210,7 @@ class ParseTree : public PoolObject
 class BlockStmt : public StmtList
 {
   public:
-    explicit BlockStmt(const token_pos_t& pos, const std::vector<Stmt*>& stmts)
+    explicit BlockStmt(const SourceLocation& pos, const std::vector<Stmt*>& stmts)
       : StmtList(StmtKind::BlockStmt, pos, stmts),
         scope_(nullptr)
     {}
@@ -231,7 +231,7 @@ class BlockStmt : public StmtList
 class BreakStmt : public Stmt
 {
   public:
-    explicit BreakStmt(const token_pos_t& pos)
+    explicit BreakStmt(const SourceLocation& pos)
       : Stmt(StmtKind::BreakStmt, pos)
     {
         set_flow_type(Flow_Break);
@@ -245,7 +245,7 @@ class BreakStmt : public Stmt
 class ContinueStmt : public Stmt
 {
   public:
-    explicit ContinueStmt(const token_pos_t& pos)
+    explicit ContinueStmt(const SourceLocation& pos)
       : Stmt(StmtKind::ContinueStmt, pos)
     {
         set_flow_type(Flow_Continue);
@@ -259,7 +259,7 @@ class ContinueStmt : public Stmt
 class StaticAssertStmt : public Stmt
 {
   public:
-    explicit StaticAssertStmt(const token_pos_t& pos, Expr* expr, PoolString* text)
+    explicit StaticAssertStmt(const SourceLocation& pos, Expr* expr, PoolString* text)
       : Stmt(StmtKind::StaticAssertStmt, pos),
         expr_(expr),
         text_(text)
@@ -281,7 +281,7 @@ class StaticAssertStmt : public Stmt
 class Decl : public Stmt
 {
   public:
-    Decl(StmtKind kind, const token_pos_t& pos, sp::Atom* name)
+    Decl(StmtKind kind, const SourceLocation& pos, sp::Atom* name)
       : Stmt(kind, pos),
         name_(name)
     {}
@@ -302,7 +302,7 @@ class BinaryExpr;
 class VarDecl : public Decl
 {
   public:
-    VarDecl(const token_pos_t& pos, sp::Atom* name, const typeinfo_t& type, int vclass,
+    VarDecl(const SourceLocation& pos, sp::Atom* name, const typeinfo_t& type, int vclass,
             bool is_public, bool is_static, bool is_stock, Expr* initializer);
 
     bool Bind(SemaContext& sc) override;
@@ -343,7 +343,7 @@ class VarDecl : public Decl
 class ConstDecl : public VarDecl
 {
   public:
-    ConstDecl(const token_pos_t& pos, sp::Atom* name, const typeinfo_t& type, int vclass,
+    ConstDecl(const SourceLocation& pos, sp::Atom* name, const typeinfo_t& type, int vclass,
               Expr* expr)
       : VarDecl(pos, name, type, vclass, false, false, false, nullptr),
         expr_(expr)
@@ -357,10 +357,10 @@ class ConstDecl : public VarDecl
 };
 
 struct EnumField {
-    EnumField(const token_pos_t& pos, sp::Atom* name, Expr* value)
+    EnumField(const SourceLocation& pos, sp::Atom* name, Expr* value)
       : pos(pos), name(name), value(value)
     {}
-    token_pos_t pos;
+    SourceLocation pos;
     sp::Atom* name;
     Expr* value;
 };
@@ -368,7 +368,7 @@ struct EnumField {
 class EnumDecl : public Decl
 {
   public:
-    explicit EnumDecl(const token_pos_t& pos, int vclass, sp::Atom* label, sp::Atom* name,
+    explicit EnumDecl(const SourceLocation& pos, int vclass, sp::Atom* label, sp::Atom* name,
                       const std::vector<EnumField>& fields, int increment, int multiplier)
       : Decl(StmtKind::EnumDecl, pos, name),
         vclass_(vclass),
@@ -403,11 +403,11 @@ class EnumDecl : public Decl
 };
 
 struct StructField {
-    StructField(const token_pos_t& pos, sp::Atom* name, const typeinfo_t& typeinfo)
+    StructField(const SourceLocation& pos, sp::Atom* name, const typeinfo_t& typeinfo)
       : pos(pos), name(name), type(typeinfo), field(nullptr)
     {}
 
-    token_pos_t pos;
+    SourceLocation pos;
     sp::Atom* name;
     typeinfo_t type;
     structarg_t* field;
@@ -419,7 +419,7 @@ struct StructField {
 class PstructDecl : public Decl
 {
   public:
-    PstructDecl(const token_pos_t& pos, sp::Atom* name, const std::vector<StructField>& fields)
+    PstructDecl(const SourceLocation& pos, sp::Atom* name, const std::vector<StructField>& fields)
       : Decl(StmtKind::PstructDecl, pos, name),
         ps_(nullptr),
         fields_(fields)
@@ -439,13 +439,13 @@ class PstructDecl : public Decl
 };
 
 struct TypedefInfo : public PoolObject {
-    TypedefInfo(const token_pos_t& pos, const TypenameInfo& ret_type,
+    TypedefInfo(const SourceLocation& pos, const TypenameInfo& ret_type,
                 const std::vector<declinfo_t*>& args)
      : pos(pos),
        ret_type(ret_type),
        args(args)
     {}
-    token_pos_t pos;
+    SourceLocation pos;
     TypenameInfo ret_type;
     PoolArray<declinfo_t*> args;
 
@@ -455,7 +455,7 @@ struct TypedefInfo : public PoolObject {
 class TypedefDecl : public Decl
 {
   public:
-    explicit TypedefDecl(const token_pos_t& pos, sp::Atom* name, TypedefInfo* type)
+    explicit TypedefDecl(const SourceLocation& pos, sp::Atom* name, TypedefInfo* type)
       : Decl(StmtKind::TypedefDecl, pos, name),
         type_(type)
     {}
@@ -475,7 +475,7 @@ class TypedefDecl : public Decl
 class TypesetDecl : public Decl
 {
   public:
-    explicit TypesetDecl(const token_pos_t& pos, sp::Atom* name,
+    explicit TypesetDecl(const SourceLocation& pos, sp::Atom* name,
                          const std::vector<TypedefInfo*>& types)
       : Decl(StmtKind::TypesetDecl, pos, name),
         types_(types)
@@ -499,7 +499,7 @@ class TypesetDecl : public Decl
 class UsingDecl : public Decl
 {
   public:
-    explicit UsingDecl(const token_pos_t& pos)
+    explicit UsingDecl(const SourceLocation& pos)
       : Decl(StmtKind::UsingDecl, pos, nullptr)
     {}
 
@@ -512,7 +512,7 @@ class UsingDecl : public Decl
 class Expr : public ParseNode
 {
   public:
-    explicit Expr(ExprKind kind, const token_pos_t& pos)
+    explicit Expr(ExprKind kind, const SourceLocation& pos)
       : ParseNode(pos),
         kind_(kind),
         lvalue_(false),
@@ -581,7 +581,7 @@ class Expr : public ParseNode
 class UnaryExpr final : public Expr
 {
   public:
-    UnaryExpr(const token_pos_t& pos, int token, Expr* expr)
+    UnaryExpr(const SourceLocation& pos, int token, Expr* expr)
       : Expr(ExprKind::UnaryExpr, pos),
         token_(token),
         expr_(expr)
@@ -609,7 +609,7 @@ class UnaryExpr final : public Expr
 class BinaryExprBase : public Expr
 {
   public:
-    BinaryExprBase(ExprKind kind, const token_pos_t& pos, int token, Expr* left, Expr* right);
+    BinaryExprBase(ExprKind kind, const SourceLocation& pos, int token, Expr* left, Expr* right);
 
     bool Bind(SemaContext& sc) override;
     void ProcessUses(SemaContext& sc) override;
@@ -629,7 +629,7 @@ class BinaryExprBase : public Expr
 class BinaryExpr final : public BinaryExprBase
 {
   public:
-    BinaryExpr(const token_pos_t& pos, int token, Expr* left, Expr* right);
+    BinaryExpr(const SourceLocation& pos, int token, Expr* left, Expr* right);
 
     bool FoldToConstant() override;
 
@@ -658,7 +658,7 @@ class BinaryExpr final : public BinaryExprBase
 class LogicalExpr final : public BinaryExprBase
 {
   public:
-    LogicalExpr(const token_pos_t& pos, int token, Expr* left, Expr* right)
+    LogicalExpr(const SourceLocation& pos, int token, Expr* left, Expr* right)
       : BinaryExprBase(ExprKind::LogicalExpr, pos, token, left, right)
     {}
 
@@ -669,9 +669,9 @@ class LogicalExpr final : public BinaryExprBase
 
 struct CompareOp
 {
-    CompareOp(const token_pos_t& pos, int token, Expr* expr);
+    CompareOp(const SourceLocation& pos, int token, Expr* expr);
 
-    token_pos_t pos;
+    SourceLocation pos;
     int token;
     Expr* expr;
     int oper_tok;
@@ -681,7 +681,7 @@ struct CompareOp
 class ChainedCompareExpr final : public Expr
 {
   public:
-    explicit ChainedCompareExpr(const token_pos_t& pos, Expr* first,
+    explicit ChainedCompareExpr(const SourceLocation& pos, Expr* first,
                                 const std::vector<CompareOp>& ops)
       : Expr(ExprKind::ChainedCompareExpr, pos),
         first_(first),
@@ -705,7 +705,7 @@ class ChainedCompareExpr final : public Expr
 class TernaryExpr final : public Expr
 {
   public:
-    TernaryExpr(const token_pos_t& pos, Expr* first, Expr* second, Expr* third)
+    TernaryExpr(const SourceLocation& pos, Expr* first, Expr* second, Expr* third)
       : Expr(ExprKind::TernaryExpr, pos),
         first_(first),
         second_(second),
@@ -740,7 +740,7 @@ class TernaryExpr final : public Expr
 class IncDecExpr : public Expr
 {
   public:
-    IncDecExpr(const token_pos_t& pos, int token, Expr* expr, bool prefix)
+    IncDecExpr(const SourceLocation& pos, int token, Expr* expr, bool prefix)
       : Expr(ExprKind::IncDecExpr, pos),
         token_(token),
         expr_(expr),
@@ -769,7 +769,7 @@ class IncDecExpr : public Expr
 class PreIncExpr final : public IncDecExpr
 {
   public:
-    PreIncExpr(const token_pos_t& pos, int token, Expr* expr)
+    PreIncExpr(const SourceLocation& pos, int token, Expr* expr)
       : IncDecExpr(pos, token, expr, true)
     {}
 };
@@ -777,7 +777,7 @@ class PreIncExpr final : public IncDecExpr
 class PostIncExpr final : public IncDecExpr
 {
   public:
-    PostIncExpr(const token_pos_t& pos, int token, Expr* expr)
+    PostIncExpr(const SourceLocation& pos, int token, Expr* expr)
       : IncDecExpr(pos, token, expr, false)
     {}
 };
@@ -785,7 +785,7 @@ class PostIncExpr final : public IncDecExpr
 class CastExpr final : public Expr
 {
   public:
-    CastExpr(const token_pos_t& pos, int token, const TypenameInfo& type, Expr* expr)
+    CastExpr(const SourceLocation& pos, int token, const TypenameInfo& type, Expr* expr)
       : Expr(ExprKind::CastExpr, pos),
         token_(token),
         type_(type),
@@ -809,7 +809,7 @@ class CastExpr final : public Expr
 class SizeofExpr final : public Expr
 {
   public:
-    SizeofExpr(const token_pos_t& pos, sp::Atom* ident, sp::Atom* field, int suffix_token, int array_levels)
+    SizeofExpr(const SourceLocation& pos, sp::Atom* ident, sp::Atom* field, int suffix_token, int array_levels)
       : Expr(ExprKind::SizeofExpr, pos),
         ident_(ident),
         field_(field),
@@ -839,7 +839,7 @@ class SizeofExpr final : public Expr
 class SymbolExpr final : public Expr
 {
   public:
-    SymbolExpr(const token_pos_t& pos, sp::Atom* name)
+    SymbolExpr(const SourceLocation& pos, sp::Atom* name)
       : Expr(ExprKind::SymbolExpr, pos),
         name_(name),
         sym_(nullptr)
@@ -866,7 +866,7 @@ class SymbolExpr final : public Expr
 class NamedArgExpr : public Expr
 {
   public:
-    NamedArgExpr(const token_pos_t& pos, sp::Atom* name, Expr* expr)
+    NamedArgExpr(const SourceLocation& pos, sp::Atom* name, Expr* expr)
       : Expr(ExprKind::NamedArgExpr, pos),
         name(name),
         expr(expr)
@@ -884,7 +884,7 @@ class NamedArgExpr : public Expr
 class CallExpr final : public Expr
 {
   public:
-    CallExpr(const token_pos_t& pos, int token, Expr* target, const std::vector<Expr*>& args)
+    CallExpr(const SourceLocation& pos, int token, Expr* target, const std::vector<Expr*>& args)
       : Expr(ExprKind::CallExpr, pos),
         token_(token),
         target_(target),
@@ -918,7 +918,7 @@ class CallExpr final : public Expr
 class EmitOnlyExpr : public Expr
 {
   public:
-    explicit EmitOnlyExpr(ExprKind kind, const token_pos_t& pos)
+    explicit EmitOnlyExpr(ExprKind kind, const SourceLocation& pos)
       : Expr(kind, pos)
     {}
 
@@ -948,7 +948,7 @@ class CallUserOpExpr final : public EmitOnlyExpr
 class DefaultArgExpr final : public Expr
 {
   public:
-    DefaultArgExpr(const token_pos_t& pos, arginfo* arg);
+    DefaultArgExpr(const SourceLocation& pos, arginfo* arg);
 
     bool Bind(SemaContext& sc) override { return true; }
     void ProcessUses(SemaContext& sc) override {}
@@ -965,7 +965,7 @@ class DefaultArgExpr final : public Expr
 class FieldAccessExpr final : public Expr
 {
   public:
-    FieldAccessExpr(const token_pos_t& pos, int tok, Expr* base, sp::Atom* name)
+    FieldAccessExpr(const SourceLocation& pos, int tok, Expr* base, sp::Atom* name)
       : Expr(ExprKind::FieldAccessExpr, pos),
         token_(tok),
         base_(base),
@@ -1000,7 +1000,7 @@ class FieldAccessExpr final : public Expr
 class IndexExpr final : public Expr
 {
   public:
-    IndexExpr(const token_pos_t& pos, Expr* base, Expr* expr)
+    IndexExpr(const SourceLocation& pos, Expr* base, Expr* expr)
       : Expr(ExprKind::IndexExpr, pos),
         base_(base),
         expr_(expr)
@@ -1043,7 +1043,7 @@ class RvalueExpr final : public EmitOnlyExpr
 class CommaExpr final : public Expr
 {
   public:
-    CommaExpr(const token_pos_t& pos, const std::vector<Expr*>& exprs)
+    CommaExpr(const SourceLocation& pos, const std::vector<Expr*>& exprs)
       : Expr(ExprKind::CommaExpr, pos),
         exprs_(exprs)
     {}
@@ -1063,7 +1063,7 @@ class CommaExpr final : public Expr
 class ThisExpr final : public Expr
 {
   public:
-    explicit ThisExpr(const token_pos_t& pos)
+    explicit ThisExpr(const SourceLocation& pos)
       : Expr(ExprKind::ThisExpr, pos),
         sym_(nullptr)
     {}
@@ -1082,7 +1082,7 @@ class ThisExpr final : public Expr
 class NullExpr final : public Expr
 {
   public:
-    explicit NullExpr(const token_pos_t& pos)
+    explicit NullExpr(const SourceLocation& pos)
       : Expr(ExprKind::NullExpr, pos)
     {}
 
@@ -1094,7 +1094,7 @@ class NullExpr final : public Expr
 class TaggedValueExpr : public Expr
 {
   public:
-    TaggedValueExpr(const token_pos_t& pos, int tag, cell value)
+    TaggedValueExpr(const SourceLocation& pos, int tag, cell value)
       : Expr(ExprKind::TaggedValueExpr, pos),
         tag_(tag),
         value_(value)
@@ -1119,7 +1119,7 @@ class TaggedValueExpr : public Expr
 class NumberExpr final : public TaggedValueExpr
 {
   public:
-    NumberExpr(const token_pos_t& pos, cell value)
+    NumberExpr(const SourceLocation& pos, cell value)
       : TaggedValueExpr(pos, 0, value)
     {}
 };
@@ -1127,7 +1127,7 @@ class NumberExpr final : public TaggedValueExpr
 class FloatExpr final : public TaggedValueExpr
 {
   public:
-    FloatExpr(const token_pos_t& pos, cell value)
+    FloatExpr(const SourceLocation& pos, cell value)
       : TaggedValueExpr(pos, sc_rationaltag, value)
     {}
 };
@@ -1135,7 +1135,7 @@ class FloatExpr final : public TaggedValueExpr
 class StringExpr final : public Expr
 {
   public:
-    StringExpr(const token_pos_t& pos, const char* str, size_t len)
+    StringExpr(const SourceLocation& pos, const char* str, size_t len)
       : Expr(ExprKind::StringExpr, pos),
         text_(new PoolString(str, len))
     {}
@@ -1155,7 +1155,7 @@ class StringExpr final : public Expr
 class NewArrayExpr final : public Expr
 {
   public:
-    NewArrayExpr(const token_pos_t& pos, const TypenameInfo& ur, const std::vector<Expr*>& exprs)
+    NewArrayExpr(const SourceLocation& pos, const TypenameInfo& ur, const std::vector<Expr*>& exprs)
       : Expr(ExprKind::NewArrayExpr, pos),
         type_(ur),
         exprs_(exprs)
@@ -1186,7 +1186,7 @@ class NewArrayExpr final : public Expr
 class ArrayExpr final : public Expr
 {
   public:
-    ArrayExpr(const token_pos_t& pos, const std::vector<Expr*>& exprs, bool ellipses)
+    ArrayExpr(const SourceLocation& pos, const std::vector<Expr*>& exprs, bool ellipses)
       : Expr(ExprKind::ArrayExpr, pos),
         ellipses_(ellipses),
         exprs_(exprs)
@@ -1210,7 +1210,7 @@ class ArrayExpr final : public Expr
 };
 
 struct StructInitFieldExpr : public Expr {
-    StructInitFieldExpr(sp::Atom* name, Expr* value, const token_pos_t& pos)
+    StructInitFieldExpr(sp::Atom* name, Expr* value, const SourceLocation& pos)
       : Expr(ExprKind::StructInitFieldExpr, pos),
         name(name), value(value)
     {}
@@ -1226,7 +1226,7 @@ struct StructInitFieldExpr : public Expr {
 class StructExpr final : public Expr
 {
   public:
-    explicit StructExpr(const token_pos_t& pos)
+    explicit StructExpr(const SourceLocation& pos)
       : Expr(ExprKind::StructExpr, pos)
     {}
 
@@ -1249,7 +1249,7 @@ class StructExpr final : public Expr
 class IfStmt : public Stmt
 {
   public:
-    explicit IfStmt(const token_pos_t& pos, Expr* cond, Stmt* on_true, Stmt* on_false)
+    explicit IfStmt(const SourceLocation& pos, Expr* cond, Stmt* on_true, Stmt* on_false)
       : Stmt(StmtKind::IfStmt, pos),
         cond_(cond),
         on_true_(on_true),
@@ -1275,7 +1275,7 @@ class IfStmt : public Stmt
 class ExprStmt : public Stmt
 {
   public:
-    ExprStmt(const token_pos_t& pos, Expr* expr)
+    ExprStmt(const SourceLocation& pos, Expr* expr)
       : Stmt(StmtKind::ExprStmt, pos),
         expr_(expr)
     {}
@@ -1297,7 +1297,7 @@ class ExprStmt : public Stmt
 class ReturnStmt : public Stmt
 {
   public:
-    explicit ReturnStmt(const token_pos_t& pos, Expr* expr)
+    explicit ReturnStmt(const SourceLocation& pos, Expr* expr)
       : Stmt(StmtKind::ReturnStmt, pos),
         expr_(expr)
     {
@@ -1325,7 +1325,7 @@ class ReturnStmt : public Stmt
 class AssertStmt : public Stmt
 {
   public:
-    explicit AssertStmt(const token_pos_t& pos, Expr* expr)
+    explicit AssertStmt(const SourceLocation& pos, Expr* expr)
       : Stmt(StmtKind::AssertStmt, pos),
         expr_(expr)
     {}
@@ -1348,7 +1348,7 @@ class AssertStmt : public Stmt
 class DeleteStmt : public Stmt
 {
   public:
-    explicit DeleteStmt(const token_pos_t& pos, Expr* expr)
+    explicit DeleteStmt(const SourceLocation& pos, Expr* expr)
       : Stmt(StmtKind::DeleteStmt, pos),
         expr_(expr)
     {}
@@ -1371,7 +1371,7 @@ class DeleteStmt : public Stmt
 class ExitStmt : public Stmt
 {
   public:
-    explicit ExitStmt(const token_pos_t& pos, Expr* expr)
+    explicit ExitStmt(const SourceLocation& pos, Expr* expr)
       : Stmt(StmtKind::ExitStmt, pos),
         expr_(expr)
     {}
@@ -1391,7 +1391,7 @@ class ExitStmt : public Stmt
 class DoWhileStmt : public Stmt
 {
   public:
-    explicit DoWhileStmt(const token_pos_t& pos, int token, Expr* cond, Stmt* body)
+    explicit DoWhileStmt(const SourceLocation& pos, int token, Expr* cond, Stmt* body)
       : Stmt(StmtKind::DoWhileStmt, pos),
         token_(token),
         cond_(cond),
@@ -1423,7 +1423,7 @@ class DoWhileStmt : public Stmt
 class ForStmt : public Stmt
 {
   public:
-    explicit ForStmt(const token_pos_t& pos, Stmt* init, Expr* cond, Expr* advance, Stmt* body)
+    explicit ForStmt(const SourceLocation& pos, Stmt* init, Expr* cond, Expr* advance, Stmt* body)
       : Stmt(StmtKind::ForStmt, pos),
         scope_(nullptr),
         init_(init),
@@ -1466,7 +1466,7 @@ class SwitchStmt : public Stmt
   public:
     typedef std::pair<PoolArray<Expr*>, Stmt*> Case;
 
-    explicit SwitchStmt(const token_pos_t& pos, Expr* expr, std::vector<Case>&& cases,
+    explicit SwitchStmt(const SourceLocation& pos, Expr* expr, std::vector<Case>&& cases,
                         Stmt* default_case)
       : Stmt(StmtKind::SwitchStmt, pos),
         expr_(expr),
@@ -1494,7 +1494,7 @@ class SwitchStmt : public Stmt
 class PragmaUnusedStmt : public Stmt
 {
   public:
-    PragmaUnusedStmt(const token_pos_t& pos, const std::vector<sp::Atom*>& names)
+    PragmaUnusedStmt(const SourceLocation& pos, const std::vector<sp::Atom*>& names)
       : Stmt(StmtKind::PragmaUnusedStmt, pos),
         names_(names)
     {}
@@ -1515,7 +1515,7 @@ class PragmaUnusedStmt : public Stmt
 class FunctionDecl : public Decl
 {
   public:
-    FunctionDecl(const token_pos_t& pos, const declinfo_t& decl);
+    FunctionDecl(const SourceLocation& pos, const declinfo_t& decl);
 
     bool EnterNames(SemaContext& sc) override;
     bool Bind(SemaContext& sc) override;
@@ -1525,8 +1525,8 @@ class FunctionDecl : public Decl
 
     bool IsVariadic() const;
 
-    const token_pos_t& end_pos() const { return end_pos_; }
-    void set_end_pos(const token_pos_t& end_pos) { end_pos_ = end_pos; }
+    const SourceLocation& end_pos() const { return end_pos_; }
+    void set_end_pos(const SourceLocation& end_pos) { end_pos_ = end_pos; }
 
     void set_alias(sp::Atom* alias) { alias_ = alias; }
 
@@ -1560,7 +1560,7 @@ class FunctionDecl : public Decl
     bool is_static() const { return is_static_; }
 
     PoolArray<VarDecl*>& args() { return args_; }
-    const token_pos_t& pos() const { return pos_; }
+    const SourceLocation& pos() const { return pos_; }
 
     declinfo_t& decl() { return decl_; }
     const declinfo_t& decl() const { return decl_; }
@@ -1595,7 +1595,7 @@ class FunctionDecl : public Decl
     sp::Atom* NameForOperator();
 
   private:
-    token_pos_t end_pos_;
+    SourceLocation end_pos_;
     declinfo_t decl_;
     Stmt* body_ = nullptr;
     PoolArray<VarDecl*> args_;
@@ -1616,14 +1616,14 @@ class FunctionDecl : public Decl
 };
 
 struct EnumStructField {
-    token_pos_t pos;
+    SourceLocation pos;
     declinfo_t decl;
 };
 
 class EnumStructDecl : public Decl
 {
   public:
-    explicit EnumStructDecl(const token_pos_t& pos, sp::Atom* name)
+    explicit EnumStructDecl(const SourceLocation& pos, sp::Atom* name)
       : Decl(StmtKind::EnumStructDecl, pos, name)
     {}
 
@@ -1643,7 +1643,7 @@ class EnumStructDecl : public Decl
 };
 
 struct MethodmapProperty : public PoolObject {
-    token_pos_t pos;
+    SourceLocation pos;
     typeinfo_t type;
     sp::Atom* name = nullptr;
     FunctionDecl* getter = nullptr;
@@ -1660,7 +1660,7 @@ struct MethodmapMethod : public PoolObject {
 class MethodmapDecl : public Decl
 {
   public:
-    explicit MethodmapDecl(const token_pos_t& pos, sp::Atom* name, bool nullable, sp::Atom* extends)
+    explicit MethodmapDecl(const SourceLocation& pos, sp::Atom* name, bool nullable, sp::Atom* extends)
       : Decl(StmtKind::MethodmapDecl, pos, name),
         nullable_(nullable),
         extends_(extends)

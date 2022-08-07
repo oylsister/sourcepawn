@@ -25,7 +25,9 @@
 #include <string>
 
 #include <amtl/am-maybe.h>
+#include "source-location.h"
 #include "stl/stl-string.h"
+#include "stl/stl-vector.h"
 
 class SourceFile
 {
@@ -36,7 +38,8 @@ class SourceFile
     SourceFile(const SourceFile&) = delete;
     SourceFile(SourceFile&&) = delete;
 
-    bool Read(unsigned char* target, int maxchars);
+    std::pair<uint32_t, uint32_t> GetLineAndCol(const SourceLocation &loc);
+
     int64_t Pos();
     void Reset(int64_t pos);
     int Eof();
@@ -44,7 +47,7 @@ class SourceFile
     const char* name() const { return name_.c_str(); }
     const std::string& path() const { return name_; }
     size_t size() const { return data_.size(); }
-    uint32_t sources_index() const { return sources_index_.get(); }
+    uint32_t sources_index() const { return sources_index_; }
 
     bool is_main_file() const { return is_main_file_; }
     void set_is_main_file() { is_main_file_ = true; }
@@ -58,15 +61,19 @@ class SourceFile
   private:
     bool Open(const std::string& file_name);
 
-    void set_sources_index(uint32_t sources_index) { sources_index_ = ke::Some(sources_index); }
-    uint32_t location_index() const { return location_index_.get(); }
-    void set_location_index(uint32_t location_index) { location_index_ = ke::Some(location_index); }
+    void set_sources_index(uint32_t sources_index) { sources_index_ = sources_index; }
+    uint32_t location_id() const { return location_id_; }
+    void set_location_id(uint32_t location_id) { location_id_ = location_id; }
+    uint32_t location_index() const { return location_index_; }
+    void set_location_index(uint32_t location_index) { location_index_ = location_index; }
 
   private:
     std::string name_;
     tr::string data_;
     size_t pos_;
     bool is_main_file_ = false;
-    ke::Maybe<uint32_t> sources_index_;
-    ke::Maybe<uint32_t> location_index_;
+    uint32_t sources_index_ = 0;
+    uint32_t location_id_ = 0;
+    uint32_t location_index_ = 0;
+    tr::vector<uint32_t> line_offsets_;
 };

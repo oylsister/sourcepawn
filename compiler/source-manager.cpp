@@ -27,7 +27,7 @@ SourceManager::SourceManager(CompileContext& cc)
 }
 
 std::shared_ptr<SourceFile> SourceManager::Open(const std::string& path,
-                                                const token_pos_t& from)
+                                                const SourceLocation& from)
 {
     auto file = std::make_shared<SourceFile>();
     if (!file->Open(path))
@@ -47,9 +47,9 @@ std::shared_ptr<SourceFile> SourceManager::Open(const std::string& path,
     file->set_sources_index(opened_files_.size());
     opened_files_.emplace_back(file);
 
-    // :TODO: fix
-    locations_[loc_index].init({}, file);
     file->set_location_index(loc_index);
+    file->set_location_id(locations_[loc_index].id);
+    locations_[loc_index].InitFile(from, file);
     return file;
 }
 
@@ -74,6 +74,81 @@ bool SourceManager::TrackExtents(uint32_t length, size_t* index) {
     return true;
 }
 
+LREntry SourceManager::NewLocationRangeEntryForMacro(const SourceLocation& from, uint32_t size) {
+    size_t index;
+    if (!TrackExtents(size, &index)) {
+        report(from, 422);
+        return LREntry{};
+    }
+
+    locations_[index].InitMacro(from, size);
+    return locations_[index];
+}
+
 LREntry SourceManager::GetLocationRangeEntryForFile(const std::shared_ptr<SourceFile>& file) {
     return locations_[file->location_index()];
+}
+
+SourceLocation SourceManager::Normalize(const SourceLocation& loc) {
+    SourceLocation iter = loc;
+    while (iter.IsInMacro()) {
+        auto loc_index = FindLocation(iter);
+        if (!loc_index)
+            return {};
+        iter = locations_[*loc_index].parent();
+    }
+    return iter;
+}
+
+FileLocation SourceManager::GetFileLoc(const SourceLocation& loc) {
+    auto file_loc = Normalize(loc);
+
+    auto loc_index = FindLocation(file_loc);
+    if (!loc_index)
+        return {};
+
+    auto file = locations_[loc_index.get()].file();
+    auto p = file->GetLineAndCol(loc);
+
+    FileLocation where;
+    where.file = file;
+    where.line = p.first;
+    where.col = p.second;
+    return where;
+}
+
+ke::Maybe<size_t> SourceManager::FindLocation(const SourceLocation& loc) {
+    if (!loc.IsSet())
+        return {};
+
+    if (last_lookup_ && locations_[last_lookup_.get()].owns(loc))
+        return last_lookup_;
+
+    // We should not allocate ids >= the next id.
+    assert(loc.offset() < next_source_id_);
+
+    // Binary search.
+    size_t lower = 0;
+    size_t upper = locations_.size();
+    while (lower < upper) {
+        size_t index = (lower + upper) / 2;
+
+        LREntry& range = locations_[index];
+        if (loc.offset() < range.id) {
+            upper = index;
+        } else if (loc.offset() > range.id + range.length() + 1) {
+            // Note +1 for the terminal offset.
+            lower = index + 1;
+        } else {
+            assert(range.owns(loc));
+
+            // Update cache.
+            last_lookup_ = ke::Some(index);
+            return last_lookup_;
+        }
+    }
+
+    // What happened?
+    assert(false);
+    return {};
 }

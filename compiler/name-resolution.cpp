@@ -55,7 +55,7 @@ AutoEnterScope::~AutoEnterScope()
 }
 
 bool
-SemaContext::BindType(const token_pos_t& pos, TypenameInfo* ti)
+SemaContext::BindType(const SourceLocation& pos, TypenameInfo* ti)
 {
     if (ti->has_tag())
         return true;
@@ -66,7 +66,7 @@ SemaContext::BindType(const token_pos_t& pos, TypenameInfo* ti)
 }
 
 bool
-SemaContext::BindType(const token_pos_t& pos, typeinfo_t* ti)
+SemaContext::BindType(const SourceLocation& pos, typeinfo_t* ti)
 {
     if (ti->has_tag())
         return true;
@@ -97,7 +97,7 @@ SemaContext::BindType(const token_pos_t& pos, typeinfo_t* ti)
 }
 
 bool
-SemaContext::BindType(const token_pos_t& pos, sp::Atom* atom, bool is_label, int* tag)
+SemaContext::BindType(const SourceLocation& pos, sp::Atom* atom, bool is_label, int* tag)
 {
     auto types = &gTypes;
     if (is_label) {
@@ -518,8 +518,7 @@ VarDecl::Bind(SemaContext& sc)
         sym_->usage |= uREAD;
     }
 
-    sym_->fnumber = pos_.file;
-    sym_->lnumber = pos_.line;
+    sym_->loc = pos_;
 
     if (def_ok)
         DefineSymbol(sc, sym_);
@@ -858,10 +857,8 @@ FunctionDecl::Bind(SemaContext& outer_sc)
     }
 
     // But position info belongs to the implementation.
-    if (!sym_->function()->forward || is_public_) {
-        sym_->fnumber = pos_.file;
-        sym_->lnumber = pos_.line;
-    }
+    if (!sym_->function()->forward || is_public_)
+        sym_->loc = pos_;
 
     // Ensure |this| argument exists.
     if (this_tag_) {
@@ -1056,7 +1053,7 @@ FunctionDecl::BindArgs(SemaContext& sc)
     // to make sure the argument lists are compatible.
     assert(sym_->function()->forward);
     assert(sym_->function()->node);
-    token_pos_t error_pos = sym_->function()->node->pos();
+    SourceLocation error_pos = sym_->function()->node->pos();
 
     size_t fwd_argc = prev_args.size();
     size_t impl_argc = arglist.size();

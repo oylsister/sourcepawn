@@ -192,7 +192,7 @@ Parser::Parse()
         add_to_end.pop_front();
     }
 
-    auto list = new StmtList(token_pos_t{}, stmts);
+    auto list = new StmtList(SourceLocation{}, stmts);
     return new ParseTree(list);
 }
 
@@ -1092,7 +1092,7 @@ Parser::constant()
 }
 
 CallExpr*
-Parser::parse_call(const token_pos_t& pos, int tok, Expr* target)
+Parser::parse_call(const SourceLocation& pos, int tok, Expr* target)
 {
     if (lexer_->match(')'))
         return new CallExpr(pos, tok, target, {});
@@ -1100,7 +1100,7 @@ Parser::parse_call(const token_pos_t& pos, int tok, Expr* target)
     bool named_params = false;
     std::vector<Expr*> args;
     do {
-        token_pos_t name_pos;
+        SourceLocation name_pos;
 
         sp::Atom* name = nullptr;
         if (lexer_->match('.')) {
@@ -1262,7 +1262,7 @@ Parser::var_init(int vclass)
 
     if (lexer_->match(tSTRING)) {
         auto tok = lexer_->current_token();
-        return new StringExpr(tok->start, tok->data.c_str(), tok->data.size());
+        return new StringExpr(tok->start.loc, tok->data.c_str(), tok->data.size());
     }
 
     // We'll check const or symbol-ness for non-sLOCALs in the semantic pass.
@@ -1270,7 +1270,7 @@ Parser::var_init(int vclass)
 }
 
 Expr*
-Parser::parse_new_array(const token_pos_t& pos, const TypenameInfo& rt)
+Parser::parse_new_array(const SourceLocation& pos, const TypenameInfo& rt)
 {
     std::vector<Expr*> exprs;
     do {

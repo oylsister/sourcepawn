@@ -21,7 +21,7 @@
 
 #include "errors.h"
 
-VarDecl::VarDecl(const token_pos_t& pos, sp::Atom* name, const typeinfo_t& type, int vclass,
+VarDecl::VarDecl(const SourceLocation& pos, sp::Atom* name, const typeinfo_t& type, int vclass,
                  bool is_public, bool is_static, bool is_stock, Expr* initializer)
  : Decl(StmtKind::VarDecl, pos, name),
    type_(type),
@@ -52,7 +52,7 @@ VarDecl::init_rhs() const
 }
 
 void
-ParseNode::error(const token_pos_t& pos, int number, ...)
+ParseNode::error(const SourceLocation& pos, int number, ...)
 {
     va_list ap;
     va_start(ap, number);
@@ -87,7 +87,7 @@ BlockStmt::WrapStmt(Stmt* stmt)
     return new BlockStmt(stmt->pos(), stmts);
 }
 
-BinaryExprBase::BinaryExprBase(ExprKind kind, const token_pos_t& pos, int token, Expr* left, Expr* right)
+BinaryExprBase::BinaryExprBase(ExprKind kind, const SourceLocation& pos, int token, Expr* left, Expr* right)
   : Expr(kind, pos),
     token_(token),
     left_(left),
@@ -96,7 +96,7 @@ BinaryExprBase::BinaryExprBase(ExprKind kind, const token_pos_t& pos, int token,
     assert(right_ != this);
 }
 
-FunctionDecl::FunctionDecl(const token_pos_t& pos, const declinfo_t& decl)
+FunctionDecl::FunctionDecl(const SourceLocation& pos, const declinfo_t& decl)
   : Decl(StmtKind::FunctionDecl, pos, decl.name),
     decl_(decl),
     analyzed_(false),
