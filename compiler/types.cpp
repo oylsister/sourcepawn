@@ -1,4 +1,4 @@
-/* vim: set sts=2 ts=8 sw=2 tw=99 et: */
+/* vim: set sts=4 ts=8 sw=4 tw=99 et: */
 /*  Pawn compiler
  *
  *  Function and variable definition and declaration, statement parser.
@@ -27,51 +27,20 @@
 
 #include <utility>
 
-#include "types.h"
+#include "compile-context.h"
 #include "sc.h"
 #include "sctracker.h"
-#include "scvars.h"
+#include "types.h"
 
 using namespace ke;
 
-TypeDictionary gTypes;
-
-Type::Type(sp::Atom* name, cell value)
+Type::Type(sp::Atom* name, TypeKind kind)
  : name_(name),
-   value_(value),
+   value_(0),
    fixed_(0),
-   intrinsic_(false),
-   first_pass_kind_(TypeKind::None),
-   kind_(TypeKind::None)
+   kind_(kind)
 {
     private_ptr_ = nullptr;
-}
-
-void
-Type::resetPtr()
-{
-    // We try to persist tag information across passes, since globals are
-    // preserved and core types should be too. However user-defined types
-    // that attach extra structural information are cleared, as that
-    // data is not retained into the statWRITE pass.
-    if (intrinsic_)
-        return;
-
-    if (kind_ != TypeKind::None)
-        first_pass_kind_ = kind_;
-    kind_ = TypeKind::None;
-    private_ptr_ = nullptr;
-}
-
-bool
-Type::isDeclaredButNotDefined() const
-{
-    if (kind_ != TypeKind::None)
-        return false;
-    if (first_pass_kind_ == TypeKind::None || first_pass_kind_ == TypeKind::EnumStruct) {
-        return true;
-    }
-    return false;
 }
 
 const char*
@@ -81,7 +50,7 @@ Type::prettyName() const
     return kindName();
   if (tagid() == 0)
     return "int";
-  return name();
+  return name()->chars();
 }
 
 const char*
@@ -112,95 +81,65 @@ Type::kindName() const
   }
 }
 
-bool
-Type::isLabelTag() const
-{
-    if (tagid() == 0 || tagid() == pc_tag_bool || tagid() == sc_rationaltag)
-        return false;
-    return kind_ == TypeKind::None;
+TypeDictionary::TypeDictionary(CompileContext& cc)
+  : cc_(cc)
+{}
+
+Type* TypeDictionary::find(sp::Atom* atom) {
+    auto iter = types_.find(atom);
+    if (iter == types_.end())
+        return nullptr;
+    return iter->second;
 }
 
-TypeDictionary::TypeDictionary() {}
-
-Type*
-TypeDictionary::find(sp::Atom* name)
-{
-    for (const auto& type : types_) {
-        if (type->nameAtom() == name)
-            return type;
-    }
-    return nullptr;
+Type* TypeDictionary::find(int tag) {
+    auto iter = tags_.find(tag);
+    assert(iter != tags_.end());
+    return iter->second;
 }
 
-Type*
-TypeDictionary::find(int tag)
-{
-    assert(size_t(tag) < types_.size());
-
-    return types_[tag];
+Type* TypeDictionary::add(const char* name, TypeKind kind) {
+    return add(cc_.atom(name), kind);
 }
 
-Type*
-TypeDictionary::findOrAdd(const char* name)
-{
-    sp::Atom* atom = gAtoms.add(name);
-    for (const auto& type : types_) {
-        if (type->nameAtom() == atom)
-            return type;
-    }
+Type* TypeDictionary::add(sp::Atom* name, TypeKind kind) {
+    Type* type = new Type(name, kind);
+    RegisterType(type);
+    return type;
+}
+
+void TypeDictionary::RegisterType(Type* type) {
+    assert(types_.find(type->name()) == types_.end());
 
     int tag = int(types_.size());
-    Type* type = new Type(atom, tag);
-    types_.push_back(type);
-    return types_.back();
-}
-
-void
-TypeDictionary::clear()
-{
-    types_.clear();
-}
-
-void
-TypeDictionary::clearExtendedTypes()
-{
-    for (const auto& type : types_)
-        type->resetPtr();
+    type->set_tag(tag);
+    types_.emplace(type->name(), type);
+    tags_.emplace(tag, type);
 }
 
 void
 TypeDictionary::init()
 {
-    Type* type = findOrAdd("_");
-    assert(type->tagid() == 0);
-
-    type = defineBool();
-    assert(type->tagid() == 1);
-
-    pc_tag_bool = type->tagid();
-    tag_any_ = defineAny()->tagid();
-    tag_function_ = defineFunction("Function", nullptr)->tagid();
-    pc_tag_string = defineString()->tagid();
-    sc_rationaltag = defineFloat()->tagid();
-    tag_void_ = defineVoid()->tagid();
-    tag_object_ = defineObject("object")->tagid();
-    tag_null_ = defineObject("null_t")->tagid();
-    tag_nullfunc_ = defineObject("nullfunc_t")->tagid();
-
-    for (const auto& type : types_)
-        type->setIntrinsic();
+    type_int_ = add("_", TypeKind::Int);
+    type_bool_ = defineBool();
+    type_any_ = defineAny();
+    type_function_ = defineFunction(cc_.atom("Function"), nullptr);
+    type_string_ = defineString();
+    type_float_ = defineFloat();
+    type_void_ = defineVoid();
+    type_object_ = defineObject("object");
+    type_null_ = defineObject("null_t");
+    type_nullfunc_ = defineObject("nullfunc_t");
 }
 
 Type*
 TypeDictionary::defineAny()
 {
-    return findOrAdd("any");
+    return add("any", TypeKind::Any);
 }
 
-Type*
-TypeDictionary::defineFunction(const char* name, funcenum_t* fe)
-{
-    Type* type = findOrAdd(name);
+Type* TypeDictionary::defineFunction(sp::Atom* name, funcenum_t* fe) {
+    Type* type = add(name, TypeKind::Function);
     type->setFunction(fe);
     return type;
 }
@@ -208,7 +147,7 @@ TypeDictionary::defineFunction(const char* name, funcenum_t* fe)
 Type*
 TypeDictionary::defineString()
 {
-    Type* type = findOrAdd("String");
+    Type* type = add("String", TypeKind::String);
     type->setFixed();
     return type;
 }
@@ -216,7 +155,7 @@ TypeDictionary::defineString()
 Type*
 TypeDictionary::defineFloat()
 {
-    Type* type = findOrAdd("Float");
+    Type* type = add("Float", TypeKind::Float);
     type->setFixed();
     return type;
 }
@@ -224,7 +163,7 @@ TypeDictionary::defineFloat()
 Type*
 TypeDictionary::defineVoid()
 {
-    Type* type = findOrAdd("void");
+    Type* type = add("void", TypeKind::Void);
     type->setFixed();
     return type;
 }
@@ -232,7 +171,7 @@ TypeDictionary::defineVoid()
 Type*
 TypeDictionary::defineObject(const char* name)
 {
-    Type* type = findOrAdd(name);
+    Type* type = add(name, TypeKind::Object);
     type->setObject();
     return type;
 }
@@ -240,13 +179,16 @@ TypeDictionary::defineObject(const char* name)
 Type*
 TypeDictionary::defineBool()
 {
-    return findOrAdd("bool");
+    return add("bool", TypeKind::Bool);
 }
 
 Type*
 TypeDictionary::defineMethodmap(const char* name, methodmap_t* map)
 {
-    Type* type = findOrAdd(name);
+    auto atom = cc_.atom(name);
+    Type* type = find(atom);
+    if (!type)
+        type = add(atom, TypeKind::Methodmap);
     type->setMethodmap(map);
     return type;
 }
@@ -254,8 +196,13 @@ TypeDictionary::defineMethodmap(const char* name, methodmap_t* map)
 Type*
 TypeDictionary::defineEnumTag(const char* name)
 {
-    Type* type = findOrAdd(name);
-    type->setEnumTag();
+    auto atom = cc_.atom(name);
+    if (auto type = find(atom)) {
+        assert(type->kind() == TypeKind::Methodmap);
+        return type;
+    }
+
+    Type* type = add(atom, TypeKind::Enum);
     if (isupper(*name))
         type->setFixed();
     return type;
@@ -264,38 +211,48 @@ TypeDictionary::defineEnumTag(const char* name)
 Type*
 TypeDictionary::defineEnumStruct(const char* name, symbol* sym)
 {
-    Type* type = findOrAdd(name);
+    Type* type = add(name, TypeKind::EnumStruct);
     type->setEnumStruct(sym);
     return type;
 }
 
 Type*
-TypeDictionary::defineTag(const char* name)
-{
-    Type* type = findOrAdd(name);
-    if (isupper(*name))
+TypeDictionary::defineTag(sp::Atom* name) {
+    Type* type = add(name, TypeKind::Enum);
+    if (isupper(*name->chars()))
         type->setFixed();
     return type;
 }
 
-Type*
-TypeDictionary::definePStruct(const char* name, pstruct_t* ps)
-{
-    Type* type = findOrAdd(name);
-    type->setStruct(ps);
+pstruct_t* TypeDictionary::definePStruct(sp::Atom* name) {
+    assert(find(name) == nullptr);
+
+    pstruct_t* type = new pstruct_t(name);
+    RegisterType(type);
     return type;
 }
 
 const char*
 pc_tagname(int tag)
 {
-    if (Type* type = gTypes.find(tag))
-        return type->name();
+    auto types = CompileContext::get().types();
+    if (Type* type = types->find(tag))
+        return type->name()->chars();
     return "__unknown__";
 }
 
 bool
 typeinfo_t::isCharArray() const
 {
-    return numdim() == 1 && tag() == pc_tag_string;
+    auto types = CompileContext::get().types();
+    return numdim() == 1 && tag() == types->tag_string();
 }
+
+const structarg_t* pstruct_t::GetArg(sp::Atom* name) const {
+    for (const auto& arg : args) {
+        if (arg->name == name)
+            return arg;
+    }
+    return nullptr;
+}
+

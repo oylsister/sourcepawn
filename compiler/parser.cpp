@@ -33,20 +33,16 @@
 #include "parse-node.h"
 #include "sc.h"
 #include "sctracker.h"
-#include "scvars.h"
 #include "semantics.h"
 #include "types.h"
 
 using namespace sp;
 
-bool Parser::sInPreprocessor = false;
-bool Parser::sDetectedIllegalPreprocessorSymbols = false;
-
 Parser::Parser(CompileContext& cc)
   : cc_(cc),
     lexer_(cc.lexer())
 {
-    types_ = &gTypes;
+    types_ = cc_.types();
 }
 
 Parser::~Parser()
@@ -460,6 +456,7 @@ Parser::parse_enumstruct()
         }
 
         declinfo_t decl = {};
+        decl.type.ident = iVARIABLE;
         if (!parse_new_decl(&decl, nullptr, DECLFLAG_FIELD))
             continue;
 
@@ -606,7 +603,7 @@ Parser::parse_pragma_unused()
     std::vector<std::string> raw_names = ke::Split(data, ",");
     std::vector<sp::Atom*> names;
     for (const auto& raw_name : raw_names)
-        names.emplace_back(gAtoms.add(raw_name));
+        names.emplace_back(cc_.atom(raw_name));
     return new PragmaUnusedStmt(pos, names);
 }
 
@@ -918,7 +915,7 @@ Parser::hier2()
 
             sp::Atom* ident;
             if (lexer_->match(tTHIS)) {
-                ident = gAtoms.add("this");
+                ident = cc_.atom("this");
             } else {
                 if (!lexer_->needsymbol(&ident))
                     return nullptr;
@@ -1060,15 +1057,15 @@ Parser::constant()
         case tNUMBER:
             return new NumberExpr(pos, lexer_->current_token()->value);
         case tRATIONAL:
-            return new FloatExpr(pos, lexer_->current_token()->value);
+            return new FloatExpr(cc_, pos, lexer_->current_token()->value);
         case tSTRING: {
             const auto& str = lexer_->current_token()->data;
             return new StringExpr(pos, str.c_str(), str.size());
         }
         case tTRUE:
-            return new TaggedValueExpr(lexer_->pos(), pc_tag_bool, 1);
+            return new TaggedValueExpr(lexer_->pos(), cc_.types()->tag_bool(), 1);
         case tFALSE:
-            return new TaggedValueExpr(lexer_->pos(), pc_tag_bool, 0);
+            return new TaggedValueExpr(lexer_->pos(), cc_.types()->tag_bool(), 0);
         case '{':
         {
             std::vector<Expr*> exprs;
@@ -1187,7 +1184,7 @@ Parser::struct_init()
                 expr = new NumberExpr(pos, lexer_->current_token()->value);
                 break;
             case tRATIONAL:
-                expr = new FloatExpr(pos, lexer_->current_token()->value);
+                expr = new FloatExpr(cc_, pos, lexer_->current_token()->value);
                 break;
             case tSYMBOL:
                 expr = new SymbolExpr(pos, lexer_->current_token()->atom);
@@ -1816,7 +1813,7 @@ Parser::parse_function(FunctionDecl* fun, int tokid, bool has_this)
         return false;
     }
 
-    std::vector<VarDecl*> args;
+    std::vector<ArgDecl*> args;
 
     // Reserve space for |this|.
     if (has_this)
@@ -1825,7 +1822,7 @@ Parser::parse_function(FunctionDecl* fun, int tokid, bool has_this)
     parse_args(fun, &args); // eats the close paren
 
     // Copy arguments.
-    new (&fun->args()) PoolArray<VarDecl*>(args);
+    new (&fun->args()) PoolArray<ArgDecl*>(args);
 
     if (fun->is_native()) {
         if (fun->decl().opertok != 0) {
@@ -1872,7 +1869,7 @@ Parser::parse_function(FunctionDecl* fun, int tokid, bool has_this)
 }
 
 void
-Parser::parse_args(FunctionDecl* fun, std::vector<VarDecl*>* args)
+Parser::parse_args(FunctionDecl* fun, std::vector<ArgDecl*>* args)
 {
     if (lexer_->match(')'))
         return;
@@ -1888,7 +1885,7 @@ Parser::parse_args(FunctionDecl* fun, std::vector<VarDecl*>* args)
             if (fun->IsVariadic())
                 error(401);
 
-            auto p = new VarDecl(pos, gAtoms.add("..."), decl.type, sARGUMENT, false, false,
+            auto p = new ArgDecl(pos, cc_.atom("..."), decl.type, sARGUMENT, false, false,
                                  false, nullptr);
             args->emplace_back(p);
             continue;
@@ -1906,7 +1903,7 @@ Parser::parse_args(FunctionDecl* fun, std::vector<VarDecl*>* args)
         if (decl.name->chars()[0] == PUBLIC_CHAR)
             report(56) << decl.name; // function arguments cannot be public
 
-        auto p = new VarDecl(pos, decl.name, decl.type, sARGUMENT, false, false,
+        auto p = new ArgDecl(pos, decl.name, decl.type, sARGUMENT, false, false,
                              false, init);
         args->emplace_back(p);
     } while (lexer_->match(','));
@@ -2018,7 +2015,7 @@ Parser::parse_methodmap_method(MethodmapDecl* map)
 
     // Build a new symbol. Construct a temporary name including the class.
     auto fullname = ke::StringPrintf("%s.%s", map->name()->chars(), symbol->chars());
-    auto fqn = gAtoms.add(fullname);
+    auto fqn = cc_.atom(fullname);
 
     auto fun = new FunctionDecl(pos, ret_type);
     fun->set_name(fqn);
@@ -2115,7 +2112,7 @@ Parser::parse_methodmap_property_accessor(MethodmapDecl* map, MethodmapProperty*
         tmpname += ".get";
     else
         tmpname += ".set";
-    fun->set_name(gAtoms.add(tmpname));
+    fun->set_name(cc_.atom(tmpname));
 
     if (is_native)
         fun->set_is_native();
@@ -2388,7 +2385,7 @@ Parser::parse_old_decl(declinfo_t* decl, int flags)
         if ((flags & DECLFLAG_MAYBE_FUNCTION) && lexer_->match(tOPERATOR)) {
             decl->opertok = operatorname(&decl->name);
             if (decl->opertok == 0)
-                decl->name = gAtoms.add("__unknown__");
+                decl->name = cc_.atom("__unknown__");
         } else {
             if (!lexer_->peek(tSYMBOL)) {
                 extern const char* sc_tokens[];
@@ -2402,7 +2399,7 @@ Parser::parse_old_decl(declinfo_t* decl, int flags)
                             error(143);
                         } else {
                             error(157, sc_tokens[tok_id - tFIRST]);
-                            decl->name = gAtoms.add(sc_tokens[tok_id - tFIRST]);
+                            decl->name = cc_.atom(sc_tokens[tok_id - tFIRST]);
                         }
                         break;
                     default:
@@ -2439,7 +2436,7 @@ Parser::parse_new_decl(declinfo_t* decl, const full_token_t* first, int flags)
         if ((flags & DECLFLAG_MAYBE_FUNCTION) && lexer_->match(tOPERATOR)) {
             decl->opertok = operatorname(&decl->name);
             if (decl->opertok == 0)
-                decl->name = gAtoms.add("__unknown__");
+                decl->name = cc_.atom("__unknown__");
         } else {
             lexer_->needsymbol(&decl->name);
         }
@@ -2454,7 +2451,6 @@ Parser::parse_new_decl(declinfo_t* decl, const full_token_t* first, int flags)
         }
     }
 
-    rewrite_type_for_enum_struct(&decl->type);
     return true;
 }
 
@@ -2476,57 +2472,34 @@ Parser::operatorname(sp::Atom** name)
         case '=':
         {
             char str[] = {(char)opertok, '\0'};
-            *name = gAtoms.add(str);
+            *name = cc_.atom(str);
             break;
         }
         case tINC:
-            *name = gAtoms.add("++");
+            *name = cc_.atom("++");
             break;
         case tDEC:
-            *name = gAtoms.add("--");
+            *name = cc_.atom("--");
             break;
         case tlEQ:
-            *name = gAtoms.add("==");
+            *name = cc_.atom("==");
             break;
         case tlNE:
-            *name = gAtoms.add("!=");
+            *name = cc_.atom("!=");
             break;
         case tlLE:
-            *name = gAtoms.add("<=");
+            *name = cc_.atom("<=");
             break;
         case tlGE:
-            *name = gAtoms.add(">=");
+            *name = cc_.atom(">=");
             break;
         default:
-            *name = gAtoms.add("");
+            *name = cc_.atom("");
             error(7); /* operator cannot be redefined (or bad operator name) */
             return 0;
     }
 
     return opertok;
-}
-
-void
-Parser::rewrite_type_for_enum_struct(typeinfo_t* info)
-{
-    Type* type = types_->find(info->declared_tag);
-    symbol* enum_type = type->asEnumStruct();
-    if (!enum_type)
-        return;
-
-    // Note that the size here is incorrect. It's fixed up in initials() by
-    // parse_var_decl. Unfortunately type->size is difficult to remove because
-    // it can't be recomputed from array sizes (yet), in the case of
-    // initializers with inconsistent final arrays. We could set it to
-    // anything here, but we follow what parse_post_array_dims() does.
-    info->set_tag(0);
-    info->dim.emplace_back(enum_type->addr());
-    assert(info->declared_tag == enum_type->tag);
-
-    if (info->ident != iARRAY && info->ident != iREFARRAY) {
-        info->ident = iARRAY;
-        info->has_postdims = true;
-    }
 }
 
 bool
@@ -2576,7 +2549,6 @@ Parser::reparse_new_decl(declinfo_t* decl, int flags)
         }
     }
 
-    rewrite_type_for_enum_struct(&decl->type);
     return true;
 }
 
@@ -2656,11 +2628,6 @@ Parser::parse_new_typeexpr(typeinfo_t* type, const full_token_t* first, int flag
         }
     }
 
-    // We're not getting another chance to do enum struct desugaring, since our
-    // caller is not looking for a declaration. Do it now.
-    if (!flags)
-        rewrite_type_for_enum_struct(type);
-
     return true;
 }
 
@@ -2679,7 +2646,7 @@ Parser::parse_new_typename(const full_token_t* tok, TypenameInfo* out)
             *out = TypenameInfo{0};
             return true;
         case tCHAR:
-            *out = TypenameInfo{pc_tag_string};
+            *out = TypenameInfo{types_->tag_string()};
             return true;
         case tVOID:
             *out = TypenameInfo{types_->tag_void()};
@@ -2692,21 +2659,21 @@ Parser::parse_new_typename(const full_token_t* tok, TypenameInfo* out)
             if (tok->id == tLABEL)
                 error(120);
             if (tok->atom->str() == "float") {
-                *out = TypenameInfo{sc_rationaltag};
+                *out = TypenameInfo{types_->tag_float()};
                 return true;
             }
             if (tok->atom->str() == "bool") {
-                *out = TypenameInfo{pc_tag_bool};
+                *out = TypenameInfo{types_->tag_bool()};
                 return true;
             }
             if (tok->atom->str() == "Float") {
                 error(98, "Float", "float");
-                *out = TypenameInfo{sc_rationaltag};
+                *out = TypenameInfo{types_->tag_float()};
                 return true;
             }
             if (tok->atom->str() == "String") {
                 error(98, "String", "char");
-                *out = TypenameInfo{pc_tag_string};
+                *out = TypenameInfo{types_->tag_string()};
                 return true;
             }
             if (tok->atom->str() == "_") {

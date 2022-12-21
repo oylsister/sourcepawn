@@ -36,9 +36,6 @@ class Parser
 
     ParseTree* Parse();
 
-    static bool sInPreprocessor;
-    static bool sDetectedIllegalPreprocessorSymbols;
-
   private:
     typedef int (Parser::*HierFn)(value*);
     typedef Expr* (Parser::*NewHierFn)();
@@ -97,7 +94,7 @@ class Parser
     TypedefInfo* parse_function_type();
 
     bool parse_function(FunctionDecl* info, int tokid, bool has_this);
-    void parse_args(FunctionDecl* info, std::vector<VarDecl*>* args);
+    void parse_args(FunctionDecl* info, std::vector<ArgDecl*>* args);
 
     // Wrapper around hier14() that allows comma expressions without a wrapping
     // parens.

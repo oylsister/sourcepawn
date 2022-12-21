@@ -146,6 +146,7 @@ class Semantics final
 
     bool Analyze();
 
+    CompileContext& cc() { return cc_; }
     SymbolScope* current_scope() const;
     SemaContext* context() { return sc_; }
     void set_context(SemaContext* sc) { sc_ = sc; }
@@ -180,10 +181,10 @@ class Semantics final
     bool CheckExprStmt(ExprStmt* stmt);
     bool CheckIfStmt(IfStmt* stmt);
     bool CheckConstDecl(ConstDecl* decl);
-    bool CheckVarDecl(VarDecl* decl);
+    bool CheckVarDecl(VarDeclBase* decl);
     bool CheckConstDecl(VarDecl* decl);
-    bool CheckPstructDecl(VarDecl* decl);
-    bool CheckPstructArg(VarDecl* decl, const pstruct_t* ps,
+    bool CheckPstructDecl(VarDeclBase* decl);
+    bool CheckPstructArg(VarDeclBase* decl, const pstruct_t* ps,
                          const StructInitFieldExpr* field, std::vector<bool>* visited);
 
     // Expressions.
@@ -213,16 +214,16 @@ class Semantics final
 
     bool CheckAssignmentLHS(BinaryExpr* expr);
     bool CheckAssignmentRHS(BinaryExpr* expr);
-    bool AddImplicitDynamicInitializer(VarDecl* decl);
+    bool AddImplicitDynamicInitializer(VarDeclBase* decl);
 
     struct ParamState {
         std::vector<Expr*> argv;
     };
 
-    bool CheckArrayDeclaration(VarDecl* decl);
+    bool CheckArrayDeclaration(VarDeclBase* decl);
     bool CheckExprForArrayInitializer(Expr* expr);
     bool CheckNewArrayExprForArrayInitializer(NewArrayExpr* expr);
-    bool CheckArgument(CallExpr* call, arginfo* arg, Expr* expr,
+    bool CheckArgument(CallExpr* call, ArgDecl* arg, Expr* expr,
                        ParamState* ps, unsigned int argpos);
     bool CheckWrappedExpr(Expr* outer, Expr* inner);
     symbol* BindNewTarget(Expr* target);
@@ -300,6 +301,6 @@ bool TestSymbols(SymbolScope* root, int testconst);
 void check_void_decl(const typeinfo_t* type, int variable);
 void check_void_decl(const declinfo_t* decl, int variable);
 int check_operatortag(int opertok, int resulttag, const char* opername);
-int argcompare(arginfo* a1, arginfo* a2);
-void fill_arg_defvalue(CompileContext& cc, VarDecl* decl, arginfo* arg);
+int argcompare(ArgDecl* a1, ArgDecl* a2);
+void fill_arg_defvalue(CompileContext& cc, ArgDecl* decl);
 bool IsLegacyEnumTag(SymbolScope* scope, int tag);

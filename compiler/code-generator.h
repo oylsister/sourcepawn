@@ -59,10 +59,10 @@ class CodeGenerator final
     void EmitStmtList(StmtList* list);
     void EmitStmt(Stmt* stmt);
     void EmitChangeScopeNode(ChangeScopeNode* node);
-    void EmitVarDecl(VarDecl* decl);
-    void EmitPstruct(VarDecl* decl);
-    void EmitGlobalVar(VarDecl* decl);
-    void EmitLocalVar(VarDecl* decl);
+    void EmitVarDecl(VarDeclBase* decl);
+    void EmitPstruct(VarDeclBase* decl);
+    void EmitGlobalVar(VarDeclBase* decl);
+    void EmitLocalVar(VarDeclBase* decl);
     void EmitIfStmt(IfStmt* stmt);
     void EmitDeleteStmt(DeleteStmt* stmt);
     void EmitDoWhileStmt(DoWhileStmt* stmt);
@@ -98,7 +98,7 @@ class CodeGenerator final
     bool EmitChainedCompareExprTest(ChainedCompareExpr* expr, bool jump_on_true,
                                     sp::Label* target);
 
-    void EmitDefaultArray(Expr* expr, arginfo* arg);
+    void EmitDefaultArray(Expr* expr, ArgDecl* arg);
     void EmitUserOp(const UserOperation& user_op, value* lval);
     void EmitCall(symbol* fun, cell nargs);
     void EmitInc(const value* lval);

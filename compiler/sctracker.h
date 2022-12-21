@@ -6,53 +6,22 @@
 
 #include "lexer.h"
 #include "pool-allocator.h"
-#include "scvars.h"
 
+class CompileContext;
 class SemaContext;
 
-struct funcenum_t {
+struct funcenum_t : public PoolObject
+{
     funcenum_t()
      : tag(0),
-       name()
+       name(),
+       anonymous(false)
     {}
     int tag;
     sp::Atom* name;
     PoolArray<functag_t*> entries;
+    bool anonymous;
 };
-
-struct structarg_t : public PoolObject
-{
-    structarg_t()
-      : type(),
-        name(nullptr),
-        offs(0),
-        index(0)
-    {}
-
-    typeinfo_t type;
-    sp::Atom* name;
-    unsigned int offs;
-    int index;
-};
-
-struct pstruct_t : public PoolObject
-{
-    explicit pstruct_t(sp::Atom* name);
-
-    sp::Atom* name;
-    PoolArray<structarg_t*> args;
-};
-
-// The ordering of these definitions should be preserved for
-// can_redef_layout_spec().
-typedef enum LayoutSpec_t {
-    Layout_None,
-    Layout_Enum,
-    Layout_FuncTag,
-    Layout_PawnStruct,
-    Layout_MethodMap,
-    Layout_Class
-} LayoutSpec;
 
 struct methodmap_method_t : public PoolObject
 {
@@ -77,7 +46,7 @@ struct methodmap_method_t : public PoolObject
 
 struct methodmap_t : public SymbolData
 {
-    methodmap_t(methodmap_t* parent, LayoutSpec spec, sp::Atom* name);
+    methodmap_t(methodmap_t* parent, sp::Atom* name);
 
     methodmap_t* asMethodmap() override { return this; }
 
@@ -85,7 +54,6 @@ struct methodmap_t : public SymbolData
     int tag;
     bool nullable;
     bool keyword_nullable;
-    LayoutSpec spec;
     sp::Atom* name;
     PoolMap<sp::Atom*, methodmap_method_t*> methods;
 
@@ -105,35 +73,17 @@ struct methodmap_t : public SymbolData
 };
 
 /**
- * Pawn Structs
- */
-pstruct_t* pstructs_add(sp::Atom* name);
-void pstructs_free();
-pstruct_t* pstructs_find(const char* name);
-const structarg_t* pstructs_getarg(const pstruct_t* pstruct, sp::Atom* name);
-
-/**
  * Function enumeration tags
  */
-void funcenums_free();
-funcenum_t* funcenums_add(sp::Atom* name);
-funcenum_t* funcenum_for_symbol(symbol* sym);
+funcenum_t* funcenums_add(CompileContext& cc, sp::Atom* name, bool anonymous);
+funcenum_t* funcenum_for_symbol(CompileContext& cc, symbol* sym);
 functag_t* functag_from_tag(int tag);
-
-/**
- * Given a name or tag, find any extra weirdness it has associated with it.
- */
-LayoutSpec deduce_layout_spec_by_tag(SemaContext& sc, int tag);
-LayoutSpec deduce_layout_spec_by_name(SemaContext& sc, sp::Atom* name);
-const char* layout_spec_name(LayoutSpec spec);
-bool can_redef_layout_spec(LayoutSpec olddef, LayoutSpec newdef);
 
 /**
  * Method maps.
  */
-methodmap_t* methodmap_add(methodmap_t* parent, LayoutSpec spec, sp::Atom* name);
+methodmap_t* methodmap_add(CompileContext& cc, methodmap_t* parent, sp::Atom* name);
 methodmap_t* methodmap_find_by_name(sp::Atom* name);
 methodmap_method_t* methodmap_find_method(methodmap_t* map, sp::Atom* name);
-void methodmaps_free();
 
 #endif //_INCLUDE_SOURCEPAWN_COMPILER_TRACKER_H_

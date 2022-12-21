@@ -45,7 +45,6 @@
 #include "lexer.h"
 #include "sc.h"
 #include "sctracker.h"
-#include "scvars.h"
 #include "symbols.h"
 #include "types.h"
 
@@ -141,7 +140,7 @@ struct variable_type_t {
 class RttiBuilder
 {
   public:
-    RttiBuilder(CodeGenerator& cg, SmxNameTable* names);
+    RttiBuilder(CompileContext& cc, CodeGenerator& cg, SmxNameTable* names);
 
     void finish(SmxBuilder& builder);
     void add_method(symbol* sym);
@@ -172,6 +171,7 @@ class RttiBuilder
     uint8_t TagToRttiBytecode(int tag);
 
   private:
+    CompileContext& cc_;
     CodeGenerator& cg_;
     TypeDictionary* types_ = nullptr;
     RefPtr<SmxNameTable> names_;
@@ -197,11 +197,12 @@ class RttiBuilder
     TypeIdCache typeid_cache_;
 };
 
-RttiBuilder::RttiBuilder(CodeGenerator& cg, SmxNameTable* names)
- : cg_(cg),
+RttiBuilder::RttiBuilder(CompileContext& cc, CodeGenerator& cg, SmxNameTable* names)
+ : cc_(cc),
+   cg_(cg),
    names_(names)
 {
-    types_ = &gTypes;
+    types_ = cc_.types();
     typeid_cache_.init(128);
     data_ = new SmxBlobSection<void>("rtti.data");
     methods_ = new SmxRttiTable<smx_rtti_method>("rtti.methods");
@@ -265,7 +266,7 @@ RttiBuilder::build_debuginfo()
                     if (prev_file_name) {
                         sp_fdbg_file_t& entry = dbg_files_->add();
                         entry.addr = prev_file_addr;
-                        entry.name = names_->add(gAtoms, prev_file_name);
+                        entry.name = names_->add(*cc_.atoms(), prev_file_name);
                     }
                     prev_file_addr = codeidx;
                 }
@@ -287,7 +288,7 @@ RttiBuilder::build_debuginfo()
     if (prev_file_name) {
         sp_fdbg_file_t& entry = dbg_files_->add();
         entry.addr = prev_file_addr;
-        entry.name = names_->add(gAtoms, prev_file_name);
+        entry.name = names_->add(*cc_.atoms(), prev_file_name);
     }
 
     // Make sure debug tables are sorted by address.
@@ -396,7 +397,7 @@ RttiBuilder::add_debug_var(SmxRttiTable<smx_rtti_debug_var>* table, DebugString&
             var.vclass = 0;
             assert(false);
     }
-    var.name = names_->add(gAtoms.add(name_start, name_end - name_start));
+    var.name = names_->add(*cc_.atoms(), name_start, name_end - name_start);
     var.code_start = code_start;
     var.code_end = code_end;
     var.type_id = type_id;
@@ -458,7 +459,7 @@ RttiBuilder::add_enumstruct(Type* type)
     typeid_cache_.add(p, type, es_index);
 
     smx_rtti_enumstruct es = {};
-    es.name = names_->add(gAtoms, type->name());
+    es.name = names_->add(*cc_.atoms(), type->name());
     es.first_field = es_fields_->count();
     es.size = sym->addr();
     enumstructs_->add(es);
@@ -474,10 +475,10 @@ RttiBuilder::add_enumstruct(Type* type)
         auto field = *iter;
 
         int dims[1], dimcount = 0;
-        if (field->dim.array.length)
-            dims[dimcount++] = field->dim.array.length;
+        if (field->dim_count())
+            dims[dimcount++] = field->dim(0);
 
-        variable_type_t type = {field->x.tags.index, dims, dimcount, false};
+        variable_type_t type = {field->semantic_tag, dims, dimcount, false};
         std::vector<uint8_t> encoding;
         encode_var_type(encoding, type);
 
@@ -502,12 +503,12 @@ RttiBuilder::add_struct(Type* type)
     uint32_t struct_index = classdefs_->count();
     typeid_cache_.add(p, type, struct_index);
 
-    pstruct_t* ps = type->asStruct();
+    pstruct_t* ps = type->as<pstruct_t>();
 
     smx_rtti_classdef classdef;
     memset(&classdef, 0, sizeof(classdef));
     classdef.flags = kClassDefType_Struct;
-    classdef.name = names_->add(gAtoms, ps->name->chars());
+    classdef.name = names_->add(*cc_.atoms(), ps->name());
     classdef.first_field = fields_->count();
     classdefs_->add(classdef);
 
@@ -556,8 +557,8 @@ RttiBuilder::encode_signature(symbol* sym)
 
     uint32_t argc = 0;
     bool is_variadic = false;
-    for (const auto& arg : sym->function()->args) {
-        if (arg.type.ident == iVARARGS)
+    for (const auto& arg : sym->function()->node->args()) {
+        if (arg->type().ident == iVARARGS)
             is_variadic = true;
         argc++;
     }
@@ -569,7 +570,7 @@ RttiBuilder::encode_signature(symbol* sym)
         bytes.push_back(cb::kVariadic);
 
     symbol* child = sym->array_return();
-    if (child && child->dim.array.length) {
+    if (child && child->dim_count()) {
         encode_ret_array_into(bytes, child);
     } else if (sym->tag == types_->tag_void()) {
         bytes.push_back(cb::kVoid);
@@ -577,11 +578,11 @@ RttiBuilder::encode_signature(symbol* sym)
         encode_tag_into(bytes, sym->tag);
     }
 
-    for (const auto& arg : sym->function()->args) {
-        int tag = arg.type.tag();
-        int numdim = arg.type.numdim();
-        if (arg.type.numdim() && arg.type.enum_struct_tag()) {
-            int last_tag = arg.type.enum_struct_tag();
+    for (const auto& arg : sym->function()->node->args()) {
+        int tag = arg->type().tag();
+        int numdim = arg->type().numdim();
+        if (arg->type().numdim() && arg->type().enum_struct_tag()) {
+            int last_tag = arg->type().enum_struct_tag();
             Type* last_type = types_->find(last_tag);
             if (last_type->isEnumStruct()) {
                 tag = last_tag;
@@ -589,11 +590,11 @@ RttiBuilder::encode_signature(symbol* sym)
             }
         }
 
-        if (arg.type.ident == iREFERENCE)
+        if (arg->type().ident == iREFERENCE)
             bytes.push_back(cb::kByRef);
 
-        auto dim = numdim ? &arg.type.dim[0] : nullptr;
-        variable_type_t info = {tag, dim, numdim, arg.type.is_const};
+        auto dim = numdim ? &arg->type().dim[0] : nullptr;
+        variable_type_t info = {tag, dim, numdim, arg->type().is_const};
         encode_var_type(bytes, info);
     }
 
@@ -612,7 +613,7 @@ RttiBuilder::add_enum(Type* type)
 
     smx_rtti_enum entry;
     memset(&entry, 0, sizeof(entry));
-    entry.name = names_->add(gAtoms, type->name());
+    entry.name = names_->add(*cc_.atoms(), type->name());
     enums_->add(entry);
     return index;
 }
@@ -634,7 +635,7 @@ RttiBuilder::add_funcenum(Type* type, funcenum_t* fe)
     uint32_t signature = type_pool_.add(bytes);
 
     smx_rtti_typedef& def = typedefs_->at(index);
-    def.name = names_->add(gAtoms, type->name());
+    def.name = names_->add(*cc_.atoms(), type->name());
     def.type_id = MakeTypeId(signature, kTypeId_Complex);
     return index;
 }
@@ -659,7 +660,7 @@ RttiBuilder::add_typeset(Type* type, funcenum_t* fe)
         encode_signature_into(bytes, iter);
 
     smx_rtti_typeset& entry = typesets_->at(index);
-    entry.name = names_->add(gAtoms, type->name());
+    entry.name = names_->add(*cc_.atoms(), type->name());
     entry.signature = type_pool_.add(bytes);
     return index;
 }
@@ -688,21 +689,23 @@ RttiBuilder::encode_enumstruct_into(std::vector<uint8_t>& bytes, Type* type)
 void
 RttiBuilder::encode_ret_array_into(std::vector<uint8_t>& bytes, symbol* sym)
 {
-    bytes.push_back(cb::kFixedArray);
-    CompactEncodeUint32(bytes, sym->dim.array.length);
+    for (int i = 0; i < sym->dim_count(); i++) {
+        bytes.push_back(cb::kFixedArray);
+        CompactEncodeUint32(bytes, sym->dim(i));
+    }
     encode_tag_into(bytes, sym->tag);
 }
 
 uint8_t
 RttiBuilder::TagToRttiBytecode(int tag)
 {
-    if (tag == pc_tag_bool)
+    if (tag == types_->tag_bool())
         return cb::kBool;
     if (tag == types_->tag_any())
         return cb::kAny;
-    if (tag == pc_tag_string)
+    if (tag == types_->tag_string())
         return cb::kChar8;
-    if (tag == sc_rationaltag)
+    if (tag == types_->tag_float())
         return cb::kFloat32;
     if (tag == 0)
         return cb::kInt32;
@@ -819,7 +822,7 @@ Assembler::Assemble(SmxByteBuffer* buffer)
     RefPtr<SmxCodeSection> code = new SmxCodeSection(".code");
     RefPtr<SmxNameTable> names = new SmxNameTable(".names");
 
-    RttiBuilder rtti(cg_, names);
+    RttiBuilder rtti(cc_, cg_, names);
 
     std::vector<function_entry> functions;
     std::unordered_set<symbol*> symbols;
@@ -886,7 +889,7 @@ Assembler::Assemble(SmxByteBuffer* buffer)
 
         sp_file_publics_t& pubfunc = publics->add();
         pubfunc.address = sym->addr();
-        pubfunc.name = names->add(gAtoms, f.name.c_str());
+        pubfunc.name = names->add(*cc_.atoms(), f.name.c_str());
 
         auto id = (uint32_t(i) << 1) | 1;
         if (!Label::ValueFits(id))
@@ -904,7 +907,7 @@ Assembler::Assemble(SmxByteBuffer* buffer)
         sp_file_natives_t& entry = natives->add();
 
         if (auto alias = sym->function()->alias)
-            entry.name = names->add(gAtoms, "@" + alias->nameAtom()->str());
+            entry.name = names->add(*cc_.atoms(), "@" + alias->nameAtom()->str());
         else
             entry.name = names->add(sym->nameAtom());
 

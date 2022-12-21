@@ -26,6 +26,7 @@
 
 #include "array-data.h"
 #include "pool-allocator.h"
+#include "shared/string-pool.h"
 #include "source-file.h"
 #include "stl/stl-forward-list.h"
 #include "stl/stl-unordered-map.h"
@@ -37,6 +38,7 @@ class ReportManager;
 class SemaContext;
 class SourceManager;
 class SymbolScope;
+class TypeDictionary;
 struct CompileOptions;
 struct symbol;
 
@@ -65,6 +67,18 @@ class CompileContext final
     ReportManager* reports() const { return reports_.get(); }
     CompileOptions* options() const { return options_.get(); }
     SourceManager* sources() const { return sources_.get(); }
+    TypeDictionary* types() const { return types_.get(); }
+    sp::StringPool* atoms() { return &atoms_; }
+
+    sp::Atom* atom(const std::string& str) {
+        return atoms_.add(str);
+    }
+    sp::Atom* atom(const char* str, size_t length) {
+        return atoms_.add(str, length);
+    }
+    sp::Atom* atom(const char* str) {
+        return atoms_.add(str);
+    }
 
     const std::string& default_include() const { return default_include_; }
     void set_default_include(const std::string& file) { default_include_ = file; }
@@ -97,6 +111,9 @@ class CompileContext final
     size_t malloc_bytes() const { return malloc_bytes_; }
     size_t malloc_bytes_peak() const { return malloc_bytes_peak_; }
 
+    bool& in_preprocessor() { return in_preprocessor_; }
+    bool& detected_illegal_preproc_symbols() { return detected_illegal_preproc_symbols_; }
+
     PoolAllocator& allocator() { return allocator_; }
 
     // No copy construction.
@@ -120,6 +137,8 @@ class CompileContext final
     std::string errfname_;
     std::unique_ptr<SourceManager> sources_;
     std::shared_ptr<SourceFile> inpf_org_;
+    std::unique_ptr<TypeDictionary> types_;
+    sp::StringPool atoms_;
 
     // The lexer is in CompileContext rather than Parser until we can eliminate
     // PreprocExpr().
@@ -145,4 +164,7 @@ class CompileContext final
 
     size_t malloc_bytes_ = 0;
     size_t malloc_bytes_peak_ = 0;
+
+    bool in_preprocessor_ = false;
+    bool detected_illegal_preproc_symbols_ = false;
 };

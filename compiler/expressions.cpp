@@ -33,7 +33,6 @@
 #include "sc.h"
 #include "sctracker.h"
 #include "semantics.h"
-#include "scvars.h"
 #include "symbols.h"
 #include "types.h"
 
@@ -63,17 +62,18 @@ MatchOperator(int oper, symbol* sym, int tag1, int tag2, int numparam)
     if (!oper)
         numparam = 1;
 
-    auto fun = sym->function();
-    if (fun->args.size() != size_t(numparam))
+    auto fun = sym->function()->node;
+    const auto& args = fun->args();
+    if (args.size() != size_t(numparam))
         return false;
 
     assert(numparam == 1 || numparam == 2);
     int tags[2] = { tag1, tag2 };
 
     for (int i = 0; i < numparam; i++) {
-        if (fun->args[i].type.ident != iVARIABLE)
+        if (args[i]->type().ident != iVARIABLE)
             return false;
-        if (fun->args[i].type.tag() != tags[i])
+        if (args[i]->type().tag() != tags[i])
             return false;
     }
 
@@ -102,7 +102,7 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
      * a quick exit.
      */
     assert(numparam == 1 || numparam == 2);
-    if (Parser::sInPreprocessor)
+    if (sc.cc().in_preprocessor())
         return false;
     if (tag1 == 0 && (numparam == 1 || tag2 == 0))
         return false;
@@ -144,7 +144,7 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
         return false;
 
     // :TODO: restrict this to globals.
-    auto opername_atom = gAtoms.add(opername);
+    auto opername_atom = sc.cc().atom(opername);
     symbol* chain = FindSymbol(sc, opername_atom);
     if (!chain)
         return false;
@@ -171,10 +171,11 @@ find_userop(SemaContext& sc, int oper, int tag1, int tag2, int numparam, const v
 
     /* check existance and the proper declaration of this function */
     if (!sym->defined) {
+        auto types = CompileContext::get().types();
         if (numparam == 1)
-            report(406) << opername << gTypes.find(tag1);
+            report(406) << opername << types->find(tag1);
         else
-            report(407) << opername << gTypes.find(tag1) << gTypes.find(tag2);
+            report(407) << opername << types->find(tag1) << types->find(tag2);
         return false;
     }
 
@@ -204,7 +205,10 @@ checktag_string(int tag, const value* sym1)
 {
     if (sym1->ident == iARRAY || sym1->ident == iREFARRAY)
         return FALSE;
-    if ((sym1->tag == pc_tag_string && tag == 0) || (sym1->tag == 0 && tag == pc_tag_string)) {
+
+    auto types = CompileContext::get().types();
+    if ((sym1->tag == types->tag_string() && tag == 0) ||
+        (sym1->tag == 0 && tag == types->tag_string())) {
         return TRUE;
     }
     return FALSE;
@@ -218,8 +222,10 @@ checkval_string(const value* sym1, const value* sym2)
     {
         return FALSE;
     }
-    if ((sym1->tag == pc_tag_string && sym2->tag == 0) ||
-        (sym1->tag == 0 && sym2->tag == pc_tag_string))
+
+    auto types = CompileContext::get().types();
+    if ((sym1->tag == types->tag_string() && sym2->tag == 0) ||
+        (sym1->tag == 0 && sym2->tag == types->tag_string()))
     {
         return TRUE;
     }
@@ -230,12 +236,12 @@ checkval_string(const value* sym1, const value* sym2)
 const char*
 type_to_name(int tag)
 {
-    auto types = &gTypes;
+    auto types = CompileContext::get().types();
     if (tag == 0)
         return "int";
-    if (tag == sc_rationaltag)
+    if (tag == types->tag_float())
         return "float";
-    if (tag == pc_tag_string)
+    if (tag == types->tag_string())
         return "char";
     if (tag == types->tag_any())
         return "any";
@@ -249,9 +255,10 @@ type_to_name(int tag)
 int
 matchtag_string(int ident, int tag)
 {
+    auto types = CompileContext::get().types();
     if (ident == iARRAY || ident == iREFARRAY)
         return FALSE;
-    return (tag == pc_tag_string) ? TRUE : FALSE;
+    return (tag == types->tag_string()) ? TRUE : FALSE;
 }
 
 static int
@@ -270,7 +277,7 @@ obj_typeerror(int id, int tag1, int tag2)
 static int
 matchobjecttags(Type* formal, Type* actual, int flags)
 {
-    auto types = &gTypes;
+    auto types = CompileContext::get().types();
     int formaltag = formal->tagid();
     int actualtag = actual->tagid();
 
@@ -335,7 +342,7 @@ matchreturntag(const functag_t* formal, const functag_t* actual)
     if (formal->ret_tag == actual->ret_tag)
         return TRUE;
 
-    auto types = &gTypes;
+    auto types = CompileContext::get().types();
     if (formal->ret_tag == types->tag_void()) {
         if (actual->ret_tag == 0)
             return TRUE;
@@ -348,9 +355,9 @@ IsValidImplicitArrayCast(int formal_tag, int actual_tag)
 {
     // Dumb check for now. This should really do a deep type validation though.
     // Fix this when we overhaul types in 1.12.
-    auto types = &gTypes;
-    if ((formal_tag == types->tag_any() && actual_tag != pc_tag_string) ||
-        (actual_tag == types->tag_any() && formal_tag != pc_tag_string))
+    auto types = CompileContext::get().types();
+    if ((formal_tag == types->tag_any() && actual_tag != types->tag_string()) ||
+        (actual_tag == types->tag_any() && formal_tag != types->tag_string()))
     {
         return true;
     }
@@ -414,7 +421,7 @@ matchfunctags(Type* formal, Type* actual)
     int formaltag = formal->tagid();
     int actualtag = actual->tagid();
 
-    auto types = &gTypes;
+    auto types = CompileContext::get().types();
     if (formaltag == types->tag_function() && actual->isFunction())
         return TRUE;
 
@@ -459,12 +466,12 @@ matchtag(int formaltag, int actualtag, int flags)
     if (formaltag == actualtag)
         return TRUE;
 
-    auto types = &gTypes;
+    auto types = CompileContext::get().types();
     Type* actual = types->find(actualtag);
     Type* formal = types->find(formaltag);
     assert(actual && formal);
 
-    if (formaltag == pc_tag_string && actualtag == 0)
+    if (formaltag == types->tag_string() && actualtag == 0)
         return TRUE;
 
     if (formal->isObject() || actual->isObject())
@@ -587,12 +594,12 @@ calc(cell left, int oper_tok, cell right, char* boolresult)
 bool
 is_valid_index_tag(int tag)
 {
-    auto types = &gTypes;
-    if (tag == 0 || tag == types->tag_any() || tag == pc_tag_string)
+    auto types = CompileContext::get().types();
+    if (tag == 0 || tag == types->tag_any() || tag == types->tag_string())
         return true;
 
     Type* idx_type = types->find(tag);
-    return idx_type->isEnum() || idx_type->isLabelTag();
+    return idx_type->isEnum();
 }
 
 int

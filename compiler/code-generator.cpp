@@ -98,15 +98,9 @@ CodeGenerator::AddDebugSymbol(symbol* sym)
                                    sym->addr(), sym->tag, symname, sym->codeaddr,
                                    asm_.position(), sym->ident, sym->vclass, (int)sym->is_const);
     if (sym->ident == iARRAY || sym->ident == iREFARRAY) {
-#if !defined NDEBUG
-        int count = sym->dim.array.level;
-#endif
-        symbol* sub;
         string += " [ ";
-        for (sub = sym; sub != NULL; sub = sub->array_child()) {
-            assert(sub->dim.array.level == count--);
-            string += ke::StringPrintf("%x:%x ", sub->x.tags.index, sub->dim.array.length);
-        }
+        for (int i = 0; i < sym->dim_count(); i++)
+            string += ke::StringPrintf("%x:%x ", sym->semantic_tag, sym->dim(i));
         string += "]";
     }
 
@@ -151,6 +145,9 @@ CodeGenerator::EmitStmt(Stmt* stmt)
             break;
         case StmtKind::VarDecl:
             EmitVarDecl(stmt->to<VarDecl>());
+            break;
+        case StmtKind::ArgDecl:
+            EmitVarDecl(stmt->to<ArgDecl>());
             break;
         case StmtKind::ExprStmt:
             // Emit even if no side effects.
@@ -270,11 +267,11 @@ CodeGenerator::EmitChangeScopeNode(ChangeScopeNode* node)
 }
 
 void
-CodeGenerator::EmitVarDecl(VarDecl* decl)
+CodeGenerator::EmitVarDecl(VarDeclBase* decl)
 {
     symbol* sym = decl->sym();
 
-    if (gTypes.find(sym->tag)->kind() == TypeKind::Struct) {
+    if (cc_.types()->find(sym->tag)->kind() == TypeKind::Struct) {
         EmitPstruct(decl);
     } else {
         sym->codeaddr = asm_.position();
@@ -292,7 +289,7 @@ CodeGenerator::EmitVarDecl(VarDecl* decl)
 }
 
 void
-CodeGenerator::EmitGlobalVar(VarDecl* decl)
+CodeGenerator::EmitGlobalVar(VarDeclBase* decl)
 {
     symbol* sym = decl->sym();
     BinaryExpr* init = decl->init();
@@ -302,7 +299,7 @@ CodeGenerator::EmitGlobalVar(VarDecl* decl)
     if (sym->ident == iVARIABLE) {
         assert(!init || init->right()->val().ident == iCONSTEXPR);
         if (init)
-            data_.Add(init->right()->val().constval);
+            data_.Add(init->right()->val().constval());
         else
             data_.Add(0);
     } else if (sym->ident == iARRAY) {
@@ -318,7 +315,7 @@ CodeGenerator::EmitGlobalVar(VarDecl* decl)
 }
 
 void
-CodeGenerator::EmitLocalVar(VarDecl* decl)
+CodeGenerator::EmitLocalVar(VarDeclBase* decl)
 {
     symbol* sym = decl->sym();
     BinaryExpr* init = decl->init();
@@ -336,7 +333,7 @@ CodeGenerator::EmitLocalVar(VarDecl* decl)
                 EmitUserOp(init->assignop(), &tmp);
                 __ emit(OP_PUSH_PRI);
             } else if (val.ident == iCONSTEXPR) {
-                __ emit(OP_PUSH_C, val.constval);
+                __ emit(OP_PUSH_C, val.constval());
             } else {
                 EmitExpr(init->right());
                 __ emit(OP_PUSH_PRI);
@@ -438,14 +435,14 @@ CodeGenerator::EmitLocalVar(VarDecl* decl)
 }
 
 void
-CodeGenerator::EmitPstruct(VarDecl* decl)
+CodeGenerator::EmitPstruct(VarDeclBase* decl)
 {
     if (!decl->init())
         return;
 
     symbol* sym = decl->sym();
-    auto type = gTypes.find(sym->tag);
-    auto ps = type->asStruct();
+    auto type = cc_.types()->find(sym->tag);
+    auto ps = type->as<pstruct_t>();
 
     std::vector<cell> values;
     values.resize(ps->args.size());
@@ -454,7 +451,7 @@ CodeGenerator::EmitPstruct(VarDecl* decl)
 
     auto init = decl->init_rhs()->as<StructExpr>();
     for (const auto& field : init->fields()) {
-        auto arg = pstructs_getarg(ps, field->name);
+        auto arg = ps->GetArg(field->name);
         if (auto expr = field->value->as<StringExpr>()) {
             values[arg->index] = data_.dat_address();
             data_.Add(expr->text()->chars(), expr->text()->length());
@@ -479,7 +476,7 @@ CodeGenerator::EmitExpr(Expr* expr)
     AutoErrorPos aep(expr->pos());
 
     if (expr->val().ident == iCONSTEXPR) {
-        __ const_pri(expr->val().constval);
+        __ const_pri(expr->val().constval());
         return;
     }
 
@@ -538,7 +535,7 @@ CodeGenerator::EmitExpr(Expr* expr)
             auto e = expr->to<ArrayExpr>();
             auto addr = data_.dat_address();
             for (const auto& expr : e->exprs())
-                data_.Add(expr->val().constval);
+                data_.Add(expr->val().constval());
             __ const_pri(addr);
             break;
         }
@@ -659,7 +656,7 @@ CodeGenerator::EmitIncDec(IncDecExpr* expr)
             EmitRvalue(&tmp);  /* and read the result into PRI */
         } else {
             __ emit(OP_PUSH_PRI);
-            InvokeGetter(val.accessor);
+            InvokeGetter(val.accessor());
             if (userop.sym) {
                 EmitUserOp(userop, &tmp);
             } else {
@@ -669,7 +666,7 @@ CodeGenerator::EmitIncDec(IncDecExpr* expr)
                     __ emit(OP_DEC_PRI);
             }
             __ emit(OP_POP_ALT);
-            InvokeSetter(val.accessor, TRUE);
+            InvokeSetter(val.accessor(), TRUE);
         }
     } else {
         if (val.ident == iARRAYCELL || val.ident == iARRAYCHAR || val.ident == iACCESSOR) {
@@ -798,10 +795,10 @@ CodeGenerator::EmitBinaryInner(int oper_tok, const UserOperation& in_user_op, Ex
     // commutative operations.
     if (left_val.ident == iCONSTEXPR) {
         if (right_val.ident == iCONSTEXPR)
-            __ const_pri(right_val.constval);
+            __ const_pri(right_val.constval());
         else
             EmitExpr(right);
-        __ const_alt(left_val.constval);
+        __ const_alt(left_val.constval());
     } else {
         // If performing a binary operation, we need to make sure the LHS winds
         // up in ALT. If performing a store, we only need to preserve LHS to
@@ -809,12 +806,12 @@ CodeGenerator::EmitBinaryInner(int oper_tok, const UserOperation& in_user_op, Ex
         bool must_save_lhs = oper_tok || !left_val.canRematerialize();
         if (right_val.ident == iCONSTEXPR) {
             if (commutative(oper_tok)) {
-                __ const_alt(right_val.constval);
+                __ const_alt(right_val.constval());
                 user_op.swapparams ^= true;
             } else {
                 if (must_save_lhs)
                     __ emit(OP_PUSH_PRI);
-                __ const_pri(right_val.constval);
+                __ const_pri(right_val.constval());
                 if (must_save_lhs)
                     __ emit(OP_POP_ALT);
             }
@@ -1107,32 +1104,32 @@ CodeGenerator::EmitIndexExpr(IndexExpr* expr)
 {
     EmitExpr(expr->base());
 
-    symbol* sym = expr->base()->val().sym;
-    assert(sym);
+    auto& base_val = expr->base()->val();
 
-    bool magic_string = (sym->tag == pc_tag_string && sym->dim.array.level == 0);
+    auto types = cc_.types();
+    bool magic_string = (base_val.tag == types->tag_string() && base_val.array_dim_count() == 1);
 
     const auto& idxval = expr->index()->val();
     if (idxval.ident == iCONSTEXPR) {
         if (!magic_string) {
             /* normal array index */
-            if (idxval.constval != 0) {
+            if (idxval.constval() != 0) {
                 /* don't add offsets for zero subscripts */
-                __ emit(OP_ADD_C, idxval.constval << 2);
+                __ emit(OP_ADD_C, idxval.constval() << 2);
             }
         } else {
             /* character index */
-            if (idxval.constval != 0) {
+            if (idxval.constval() != 0) {
                 /* don't add offsets for zero subscripts */
-                __ emit(OP_ADD_C, idxval.constval); /* 8-bit character */
+                __ emit(OP_ADD_C, idxval.constval()); /* 8-bit character */
             }
         }
     } else {
         __ emit(OP_PUSH_PRI);
         EmitExpr(expr->index());
 
-        if (sym->dim.array.length != 0) {
-            __ emit(OP_BOUNDS, sym->dim.array.length - 1); /* run time check for array bounds */
+        if (base_val.array_size()) {
+            __ emit(OP_BOUNDS, base_val.array_size() - 1); /* run time check for array bounds */
         } else {
             // vm uses unsigned compare, this protects against negative indices.
             __ emit(OP_BOUNDS, INT_MAX); 
@@ -1148,8 +1145,10 @@ CodeGenerator::EmitIndexExpr(IndexExpr* expr)
     }
 
     // The indexed item is another array (multi-dimensional arrays).
-    if (sym->dim.array.level > 0)
+    if (base_val.array_dim_count() > 1) {
+        assert(expr->val().ident == iARRAY || expr->val().ident == iREFARRAY);
         __ emit(OP_LOAD_I);
+    }
 }
 
 void
@@ -1184,7 +1183,7 @@ CodeGenerator::EmitCallExpr(CallExpr* call)
     }
 
     const auto& argv = call->args();
-    const auto& arginfov = call->sym()->function()->args;
+    const auto& arginfov = call->sym()->function()->node->args();
     for (size_t i = argv.size() - 1; i < argv.size(); i--) {
         const auto& expr = argv[i];
 
@@ -1198,22 +1197,22 @@ CodeGenerator::EmitCallExpr(CallExpr* call)
         const auto& val = expr->val();
         bool lvalue = expr->lvalue();
 
-        const arginfo* arg;
+        ArgDecl* arg;
         if (i < arginfov.size()) {
-            arg = &arginfov[i];
+            arg = arginfov[i];
         } else {
-            arg = &arginfov.back();
-            assert(arg->type.ident == iVARARGS);
+            arg = arginfov.back();
+            assert(arg->type().ident == iVARARGS);
         }
 
-        switch (arg->type.ident) {
+        switch (arg->type().ident) {
             case iVARARGS:
                 if (val.ident == iVARIABLE || val.ident == iREFERENCE) {
                     assert(val.sym);
                     assert(lvalue);
                     /* treat a "const" variable passed to a function with a non-const
                      * "variable argument list" as a constant here */
-                    if (val.sym->is_const && !arg->type.is_const) {
+                    if (val.sym->is_const && !arg->type().is_const) {
                         EmitRvalue(val);
                         __ setheap_pri();
                         TrackTempHeapAlloc(expr, 1);
@@ -1257,17 +1256,17 @@ void
 CodeGenerator::EmitDefaultArgExpr(DefaultArgExpr* expr)
 {
     const auto& arg = expr->arg();
-    switch (arg->type.ident) {
+    switch (arg->type().ident) {
         case iREFARRAY:
             EmitDefaultArray(expr, arg);
             break;
         case iREFERENCE:
-            __ const_pri(arg->def->val.get());
+            __ const_pri(arg->default_value()->val.get());
             __ setheap_pri();
             TrackTempHeapAlloc(expr, 1);
             break;
         case iVARIABLE:
-            __ const_pri(arg->def->val.get());
+            __ const_pri(arg->default_value()->val.get());
             break;
         default:
             assert(false);
@@ -1292,20 +1291,22 @@ CodeGenerator::EmitCallUserOpExpr(CallUserOpExpr* expr)
 void
 CodeGenerator::EmitNewArrayExpr(NewArrayExpr* expr)
 {
+    auto types = cc_.types();
+
     int numdim = 0;
     auto& exprs = expr->exprs();
     const auto& type = expr->type();
     for (size_t i = 0; i < exprs.size(); i++) {
         EmitExpr(exprs[i]);
 
-        if (i == exprs.size() - 1 && type.tag() == pc_tag_string)
+        if (i == exprs.size() - 1 && type.tag() == types->tag_string())
             __ emit(OP_STRADJUST_PRI);
 
         __ emit(OP_PUSH_PRI);
         numdim++;
     }
 
-    if (symbol* es = gTypes.find(type.tag())->asEnumStruct()) {
+    if (symbol* es = cc_.types()->find(type.tag())->asEnumStruct()) {
         // The last dimension is implicit in the size of the enum struct. Note
         // that when synthesizing a NewArrayExpr for old-style declarations,
         // it is impossible to have an enum struct.
@@ -1353,8 +1354,9 @@ CodeGenerator::EmitReturnArrayStmt(ReturnStmt* stmt)
         // A much simpler copy can be emitted.
         __ load_hidden_arg(func_, sub, true);
 
-        cell size = sub->dim.array.length;
-        if (sub->tag == pc_tag_string)
+        auto types = cc_.types();
+        cell size = sub->dim(0); // :todo: must be val
+        if (sub->tag == types->tag_string())
             size = char_array_cells(size);
 
         __ emit(OP_MOVS, size * sizeof(cell));
@@ -1438,7 +1440,7 @@ CodeGenerator::EmitDeleteStmt(DeleteStmt* stmt)
             switch (v.ident) {
                 case iACCESSOR:
                     // EmitRvalue() removes iACCESSOR so we store it locally.
-                    accessor = v.accessor;
+                    accessor = v.accessor();
                     if (!accessor->setter) {
                         zap = false;
                         break;
@@ -1493,9 +1495,8 @@ CodeGenerator::EmitRvalue(value* lval)
             __ emit(OP_LREF_S_PRI, lval->sym->addr());
             break;
         case iACCESSOR:
-            InvokeGetter(lval->accessor);
+            InvokeGetter(lval->accessor());
             lval->ident = iEXPRESSION;
-            lval->accessor = nullptr;
             break;
         default:
             assert(lval->sym);
@@ -1523,7 +1524,7 @@ CodeGenerator::EmitStore(const value* lval)
             __ emit(OP_SREF_S_PRI, lval->sym->addr());
             break;
         case iACCESSOR:
-            InvokeSetter(lval->accessor, true);
+            InvokeSetter(lval->accessor(), true);
             break;
         default:
             assert(lval->sym);
@@ -1751,7 +1752,7 @@ CodeGenerator::EmitSwitchStmt(SwitchStmt* stmt)
             const auto& v = expr->val();
             assert(v.ident == iCONSTEXPR);
 
-            case_labels.emplace(v.constval, label);
+            case_labels.emplace(v.constval(), label);
         }
 
         EmitStmt(stmt);
@@ -1892,9 +1893,9 @@ CodeGenerator::EmitCall(symbol* sym, cell nargs)
 }
 
 void
-CodeGenerator::EmitDefaultArray(Expr* expr, arginfo* arg)
+CodeGenerator::EmitDefaultArray(Expr* expr, ArgDecl* arg)
 {
-    DefaultArg* def = arg->def;
+    DefaultArg* def = arg->default_value();
     if (def->sym) {
         __ emit(OP_CONST_PRI, def->sym->addr());
         return;
@@ -1908,7 +1909,7 @@ CodeGenerator::EmitDefaultArray(Expr* expr, arginfo* arg)
         data_.AddZeroes(def->array->zeroes);
     }
 
-    if (arg->type.is_const || !def->array) {
+    if (arg->type().is_const || !def->array) {
         // No modification is possible, so use the array we emitted. (This is
         // why we emitted the zeroes above.)
         __ const_pri(def->val.get());
@@ -2019,7 +2020,7 @@ void CodeGenerator::EmitInc(const value* lval)
             break;
         case iACCESSOR:
             __ emit(OP_INC_PRI);
-            InvokeSetter(lval->accessor, false);
+            InvokeSetter(lval->accessor(), false);
             break;
         default:
             if (lval->sym->vclass == sLOCAL || lval->sym->vclass == sARGUMENT)
@@ -2055,7 +2056,7 @@ void CodeGenerator::EmitDec(const value* lval)
             break;
         case iACCESSOR:
             __ emit(OP_DEC_PRI);
-            InvokeSetter(lval->accessor, false);
+            InvokeSetter(lval->accessor(), false);
             break;
         default:
             if (lval->sym->vclass == sLOCAL || lval->sym->vclass == sARGUMENT)

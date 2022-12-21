@@ -28,7 +28,6 @@
 #include "lexer.h"
 #include "parser.h"
 #include "sc.h"
-#include "scvars.h"
 #include "semantics.h"
 
 void
@@ -93,18 +92,21 @@ markusage(symbol* sym, int usage)
 }
 
 FunctionData::FunctionData()
- : node(nullptr),
-   forward(nullptr),
-   alias(nullptr)
+  : node(nullptr),
+    forward(nullptr),
+    alias(nullptr),
+    checked_one_signature(false),
+    compared_prototype_args(false),
+    is_member_function(false)
 {
 }
 
-symbol::symbol(sp::Atom* symname, cell symaddr, int symident, int symvclass, int symtag)
+symbol::symbol(sp::Atom* symname, cell symaddr, IdentifierKind symident, int symvclass, int symtag)
  : next(nullptr),
    codeaddr(0),
    vclass((char)symvclass),
-   ident((char)symident),
    tag(symtag),
+   ident(symident),
    usage(0),
    defined(false),
    is_const(false),
@@ -123,20 +125,19 @@ symbol::symbol(sp::Atom* symname, cell symaddr, int symident, int symvclass, int
    deprecated(false),
    queued(false),
    explicit_return_type(false),
-   x({}),
+   semantic_tag(0),
+   dim_data(nullptr),
    fnumber(0),
    /* assume global visibility (ignored for local symbols) */
    lnumber(0),
    documentation(nullptr),
    addr_(symaddr),
-   name_(nullptr),
-   parent_(nullptr),
-   child_(nullptr)
+   name_(nullptr)
 {
+    assert(ident != iINVALID);
     name_ = symname;
     if (symident == iFUNCTN)
         data_ = new FunctionData;
-    memset(&dim, 0, sizeof(dim));
 }
 
 symbol::symbol(const symbol& other)
@@ -159,9 +160,24 @@ symbol::symbol(const symbol& other)
     is_const = other.is_const;
     deprecated = other.deprecated;
     documentation = other.documentation;
+    semantic_tag = other.semantic_tag;
     // Note: explicitly don't add queued.
 
-    x = other.x;
+    if (other.dim_data) {
+        set_dim_count(other.dim_count());
+        for (int i = 0; i < other.dim_count(); i++)
+            set_dim(i, other.dim(i));
+    }
+}
+
+void symbol::set_dim_count(int dim_count) {
+    if (this->dim_count() == dim_count)
+        return;
+
+    auto& cc = CompileContext::get();
+    dim_data = cc.allocator().alloc<int>(dim_count + 1);
+    dim_data[0] = dim_count;
+    dim_data++;
 }
 
 void
@@ -177,7 +193,7 @@ symbol::add_reference_to(symbol* other)
 bool
 symbol::must_return_value() const
 {
-    auto types = &gTypes;
+    auto types = CompileContext::get().types();
     assert(ident == iFUNCTN);
     return retvalue_used || (explicit_return_type && tag != types->tag_void());
 }
@@ -186,46 +202,23 @@ bool
 symbol::is_variadic() const
 {
     assert(ident == iFUNCTN);
-    const auto& args = function()->args;
-    return !args.empty() && args.back().type.ident == iVARARGS;
+    const auto& args = function()->node->args();
+    return !args.empty() && args.back()->type().ident == iVARARGS;
 }
 
 symbol*
-NewVariable(sp::Atom* name, cell addr, int ident, int vclass, int tag, int dim[], int numdim,
-            int semantic_tag)
+NewVariable(sp::Atom* name, cell addr, IdentifierKind ident, int vclass, int tag, int dim[],
+            int numdim, int semantic_tag)
 {
-    symbol* sym;
+    symbol* sym = new symbol(name, addr, ident, vclass, tag);
 
-    if (ident == iARRAY || ident == iREFARRAY) {
-        symbol *parent = NULL, *top;
-        int level;
-        sym = NULL; /* to avoid a compiler warning */
-        for (level = 0; level < numdim; level++) {
-            top = new symbol(name, addr, ident, vclass, tag);
-            top->defined = true;
-            top->dim.array.length = dim[level];
-            top->dim.array.level = (short)(numdim - level - 1);
-            top->x.tags.index = (level == numdim - 1) ? semantic_tag : 0;
-            top->set_parent(parent);
-            if (parent) {
-                parent->set_array_child(top);
-            }
-            parent = top;
-            if (level == 0)
-                sym = top;
-        }
-    } else {
-        sym = new symbol(name, addr, ident, vclass, tag);
+    if (numdim) {
+        sym->set_dim_count(numdim);
+        for (int i = 0; i < numdim; i++)
+            sym->set_dim(i, dim[i]);
+        sym->semantic_tag = semantic_tag;
     }
     return sym;
-}
-
-int findnamedarg(const PoolArray<arginfo>& args, sp::Atom* name) {
-    for (int i = 0; i < args.size() && args[i].type.ident != iVARARGS; i++) {
-        if (args[i].name == name)
-            return (int)i;
-    }
-    return -1;
 }
 
 symbol*
@@ -259,7 +252,7 @@ check_operatortag(int opertok, int resulttag, const char* opername)
         case tlNE:
         case tlLE:
         case tlGE:
-            if (resulttag != pc_tag_bool) {
+            if (resulttag != CompileContext::get().types()->tag_bool()) {
                 error(63, opername, "bool:"); /* operator X requires a "bool:" result tag */
                 return FALSE;
             }

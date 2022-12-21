@@ -31,7 +31,6 @@
 #include "parser.h"
 #include "sc.h"
 #include "sctracker.h"
-#include "scvars.h"
 #include "semantics.h"
 #include "symbols.h"
 
@@ -75,7 +74,7 @@ SemaContext::BindType(const token_pos_t& pos, typeinfo_t* ti)
     if (!BindType(pos, ti->type_atom, ti->is_label, &tag))
         return false;
 
-    auto type = gTypes.find(tag);
+    auto type = cc_.types()->find(tag);
     if (auto enum_type = type->asEnumStruct()) {
         if (ti->ident == iREFERENCE) {
             report(pos, 136);
@@ -99,20 +98,18 @@ SemaContext::BindType(const token_pos_t& pos, typeinfo_t* ti)
 bool
 SemaContext::BindType(const token_pos_t& pos, sp::Atom* atom, bool is_label, int* tag)
 {
-    auto types = &gTypes;
-    if (is_label) {
-        *tag = types->defineTag(atom->chars())->tagid();
-        return true;
-    }
+    auto types = cc_.types();
 
     Type* type = types->find(atom);
     if (!type) {
-        report(pos, 139) << atom;
-        return false;
-    }
+        if (!is_label) {
+            report(pos, 139) << atom;
+            return false;
+        }
 
-    if (type->tagid() != types->tag_any() && type->isDeclaredButNotDefined())
-        report(pos, 139) << atom;
+        *tag = types->defineTag(atom)->tagid();
+        return true;
+    }
 
     *tag = type->tagid();
     return true;
@@ -166,29 +163,34 @@ EnumDecl::EnterNames(SemaContext& sc)
 
     int tag = 0;
     if (label_) {
-        auto type = gTypes.find(label_);
-        if (type && type->tagid() == 0) {
+        auto type = sc.cc().types()->find(label_);
+        if (!type) {
+            tag = sc.cc().types()->defineEnumTag(label_->chars())->tagid();
+        } else if (type->kind() == TypeKind::Int) {
             // No implicit-int allowed.
-            error(pos_, 169);
+            report(pos_, 169);
             label_ = nullptr;
+        } else if (type->kind() != TypeKind::Methodmap && type->kind() != TypeKind::Enum) {
+            report(pos_, 432) << label_ << type->kindName();
         } else {
-            tag = gTypes.defineEnumTag(label_->chars())->tagid();
+            tag = type->tagid();
         }
     }
 
     if (name_) {
         if (label_)
             error(pos_, 168);
-        tag = gTypes.defineEnumTag(name_->chars())->tagid();
+
+        if (auto type = sc.cc().types()->find(name_)) {
+            if (type->kind() != TypeKind::Methodmap && type->kind() != TypeKind::Enum)
+                report(pos_, 432) << name_ << type->kindName();
+            tag = type->tagid();
+        } else {
+            tag = sc.cc().types()->defineEnumTag(name_->chars())->tagid();
+        }
     } else {
         // The name is automatically the label.
         name_ = label_;
-    }
-
-    if (tag) {
-        auto spec = deduce_layout_spec_by_tag(sc, tag);
-        if (!can_redef_layout_spec(spec, Layout_Enum))
-            report(pos_, 110) << name_ << layout_spec_name(spec);
     }
 
     symbol* enumsym = nullptr;
@@ -236,8 +238,6 @@ EnumDecl::EnterNames(SemaContext& sc)
         if (!sym)
             continue;
 
-        // set the item tag and the item size, for use in indexing arrays
-        sym->set_parent(enumsym);
         // add the constant to a separate list as well
         if (enumroot) {
             sym->enumfield = true;
@@ -275,9 +275,8 @@ EnumDecl::Bind(SemaContext& sc)
 bool
 PstructDecl::EnterNames(SemaContext& sc)
 {
-    auto spec = deduce_layout_spec_by_name(sc, name_);
-    if (!can_redef_layout_spec(spec, Layout_PawnStruct)) {
-        report(pos_, 110) << name_ << layout_spec_name(spec);
+    if (auto type = sc.cc().types()->find(name_)) {
+        report(pos_, 432) << name_ << type->kindName();
         return false;
     }
     if (!isupper(*name_->chars())) {
@@ -285,13 +284,12 @@ PstructDecl::EnterNames(SemaContext& sc)
         return false;
     }
 
-    ps_ = pstructs_add(name_);
-    gTypes.definePStruct(ps_->name->chars(), ps_);
+    ps_ = sc.cc().types()->definePStruct(name_);
 
     std::vector<structarg_t*> args;
     for (auto& field : fields_) {
-        if (pstructs_getarg(ps_, field.name)) {
-            report(field.pos, 103) << field.name << layout_spec_name(Layout_PawnStruct);
+        if (ps_->GetArg(field.name)) {
+            report(field.pos, 103) << field.name << "internal struct";
             return false;
         }
 
@@ -329,12 +327,12 @@ PstructDecl::Bind(SemaContext& sc)
 bool
 TypedefDecl::EnterNames(SemaContext& sc)
 {
-    if (Type* prev_type = gTypes.find(name_)) {
-        report(pos_, 110) << name_ << prev_type->kindName();
+    if (Type* prev_type = sc.cc().types()->find(name_)) {
+        report(pos_, 432) << name_ << prev_type->kindName();
         return false;
     }
 
-    fe_ = funcenums_add(name_);
+    fe_ = funcenums_add(sc.cc(), name_, false);
     return true;
 }
 
@@ -389,12 +387,12 @@ TypedefInfo::Bind(SemaContext& sc)
 bool
 TypesetDecl::EnterNames(SemaContext& sc)
 {
-    if (Type* prev_type = gTypes.find(name_)) {
-        report(pos_, 110) << name_ << prev_type->kindName();
+    if (Type* prev_type = sc.cc().types()->find(name_)) {
+        report(pos_, 432) << name_ << prev_type->kindName();
         return false;
     }
 
-    fe_ = funcenums_add(name_);
+    fe_ = funcenums_add(sc.cc(), name_, false);
     return true;
 }
 
@@ -456,9 +454,7 @@ ConstDecl::Bind(SemaContext& sc)
     return true;
 }
 
-bool
-VarDecl::Bind(SemaContext& sc)
-{
+bool VarDeclBase::Bind(SemaContext& sc) {
     if (!sc.BindType(pos(), &type_))
         return false;
 
@@ -469,7 +465,7 @@ VarDecl::Bind(SemaContext& sc)
     if (type_.ident == iARRAY)
         ResolveArraySize(sc.sema(), this);
 
-    auto types = &gTypes;
+    auto types = sc.cc().types();
     if (type_.tag() == types->tag_void())
         error(pos_, 144);
 
@@ -487,15 +483,15 @@ VarDecl::Bind(SemaContext& sc)
     if ((vclass_ == sSTATIC || vclass_ == sGLOBAL) && type_.ident == iREFARRAY)
         error(pos_, 165);
 
-    if (gTypes.find(type_.tag())->kind() == TypeKind::Struct) {
+    if (sc.cc().types()->find(type_.tag())->kind() == TypeKind::Struct) {
         sym_ = new symbol(name_, 0, iVARIABLE, sGLOBAL, type_.tag());
         sym_->is_struct = true;
         sym_->stock = is_stock_;
         sym_->is_const = true;
     } else {
-        int ident = type_.ident;
+        IdentifierKind ident = type_.ident;
         if (vclass_ == sARGUMENT && ident == iARRAY)
-            ident = iREFARRAY;
+            type_.ident = ident = iREFARRAY;
 
         auto dim = type_.dim.empty() ? nullptr : &type_.dim[0];
         sym_ = NewVariable(name_, 0, ident, vclass_, type_.tag(), dim,
@@ -530,9 +526,7 @@ VarDecl::Bind(SemaContext& sc)
     return true;
 }
 
-bool
-VarDecl::BindType(SemaContext& sc)
-{
+bool VarDeclBase::BindType(SemaContext& sc) {
     return sc.BindType(pos(), &type_);
 }
 
@@ -553,8 +547,8 @@ SymbolExpr::DoBind(SemaContext& sc, bool is_lval)
 {
     AutoErrorPos aep(pos_);
 
-    if (Parser::sInPreprocessor) {
-        Parser::sDetectedIllegalPreprocessorSymbols = true;
+    if (sc.cc().in_preprocessor()) {
+        sc.cc().detected_illegal_preproc_symbols() = true;
 
         report(pos_, 230) << name_;
     }
@@ -575,7 +569,7 @@ ThisExpr::Bind(SemaContext& sc)
 {
     AutoErrorPos aep(pos_);
 
-    sym_ = FindSymbol(sc, gAtoms.add("this"));
+    sym_ = FindSymbol(sc, sc.cc().atom("this"));
     if (!sym_) {
         error(pos_, 166);
         return false;
@@ -786,9 +780,11 @@ FunctionDecl::EnterNames(SemaContext& sc)
         DefineSymbol(sc, sym);
     }
 
-    if (body())
+    // Prioritize the implementation as the canonical signature.
+    if (!sym->function()->node || body_)
         sym->function()->node = this;
-    else if (is_forward())
+
+    if (is_forward())
         sym->function()->forward = this;
 
     sym_ = sym;
@@ -812,7 +808,7 @@ FunctionDecl::CanRedefine(symbol* sym)
             return true;
         }
 
-        if (data->node) {
+        if (data->node && data->node != data->forward) {
             report(pos_, 21) << name_;
             return false;
         }
@@ -846,7 +842,7 @@ FunctionDecl::Bind(SemaContext& outer_sc)
         sym_ = new symbol(decl_.name, 0, iFUNCTN, sGLOBAL, 0);
 
     // This may not be set if EnterNames wasn't called (eg not a global).
-    if (body_ && !sym_->function()->node)
+    if (!sym_->function()->node || body_)
         sym_->function()->node = this;
 
     // The forward's prototype is canonical. If this symbol has a forward, we
@@ -865,7 +861,7 @@ FunctionDecl::Bind(SemaContext& outer_sc)
 
     // Ensure |this| argument exists.
     if (this_tag_) {
-        Type* type = gTypes.find(*this_tag_);
+        Type* type = outer_sc.cc().types()->find(*this_tag_);
 
         typeinfo_t typeinfo = {};
         if (symbol* enum_type = type->asEnumStruct()) {
@@ -879,7 +875,7 @@ FunctionDecl::Bind(SemaContext& outer_sc)
             typeinfo.is_const = true;
         }
 
-        auto decl = new VarDecl(pos_, gAtoms.add("this"), typeinfo, sARGUMENT, false,
+        auto decl = new ArgDecl(pos_, outer_sc.cc().atom("this"), typeinfo, sARGUMENT, false,
                                 false, false, nullptr);
         assert(args_[0] == nullptr);
         args_[0] = decl;
@@ -966,9 +962,9 @@ FunctionDecl::Bind(SemaContext& outer_sc)
 bool
 FunctionDecl::BindArgs(SemaContext& sc)
 {
-    std::vector<arginfo> arglist;
-
     AutoCountErrors errors;
+
+    size_t arg_index = 0;
     for (const auto& var : args_) {
         const auto& typeinfo = var->type();
         symbol* argsym = var->sym();
@@ -977,16 +973,13 @@ FunctionDecl::BindArgs(SemaContext& sc)
 
         if (typeinfo.ident == iVARARGS) {
             /* redimension the argument list, add the entry iVARARGS */
-            arglist.emplace_back();
-            arglist.back().type.ident = iVARARGS;
-            arglist.back().type.set_tag(typeinfo.tag());
             continue;
         }
 
-        Type* type = gTypes.find(typeinfo.semantic_tag());
+        Type* type = sc.cc().types()->find(typeinfo.semantic_tag());
         if (type->isEnumStruct()) {
             if (sym_->native)
-                error(var->pos(), 135, type->name());
+                report(var->pos(), 135) << type->name();
         }
 
         /* Stack layout:
@@ -998,25 +991,17 @@ FunctionDecl::BindArgs(SemaContext& sc)
          *
          * Since arglist has an empty terminator at the end, we actually add 2.
          */
-        argsym->setAddr(static_cast<cell>((arglist.size() + 3) * sizeof(cell)));
-
-        arglist.emplace_back();
-        arginfo& arg = arglist.back();
-        arg.name = var->name();
-        arg.type.ident = argsym->ident;
-        arg.type.is_const = argsym->is_const;
-        arg.type.set_tag(argsym->tag);
-        arg.type.dim = typeinfo.dim;
-        arg.type.declared_tag = typeinfo.enum_struct_tag();
+        argsym->setAddr(static_cast<cell>((arg_index + 3) * sizeof(cell)));
+        arg_index++;
 
         if (typeinfo.ident == iREFARRAY || typeinfo.ident == iARRAY) {
             if (sc.sema()->CheckVarDecl(var) && var->init_rhs())
-                fill_arg_defvalue(sc.cc(), var, &arg);
+                fill_arg_defvalue(sc.cc(), var);
         } else {
             Expr* init = var->init_rhs();
             if (init && sc.sema()->CheckExpr(init)) {
                 assert(typeinfo.ident == iVARIABLE || typeinfo.ident == iREFERENCE);
-                arg.def = new DefaultArg();
+                var->set_default_value(new DefaultArg());
 
                 int tag;
                 cell val;
@@ -1027,30 +1012,27 @@ FunctionDecl::BindArgs(SemaContext& sc)
                     val = 0;
                     tag = typeinfo.tag();
                 }
-                arg.def->tag = tag;
-                arg.def->val = ke::Some(val);
+                var->default_value()->tag = tag;
+                var->default_value()->val = ke::Some(val);
 
-                matchtag(arg.type.tag(), arg.def->tag, MATCHTAG_COERCE);
+                matchtag(var->type().tag(), tag, MATCHTAG_COERCE);
             }
         }
 
-        if (arg.type.ident == iREFERENCE)
+        if (var->type().ident == iREFERENCE)
             argsym->usage |= uREAD; /* because references are passed back */
         if (sym_->callback || sym_->stock || sym_->is_public)
             argsym->usage |= uREAD; /* arguments of public functions are always "used" */
 
         /* arguments of a public function may not have a default value */
-        if (sym_->is_public && arg.def)
-            error(var->pos(), 59, var->name()->chars());
+        if (sym_->is_public && var->default_value())
+            report(var->pos(), 59) << var->name();
     }
 
-    // Now, see if the function already had an argument list.
-    auto& prev_args = sym_->function()->args;
-    if (prev_args.empty()) {
-        // No, replace it with the new list.
-        new (&sym_->function()->args) PoolArray<arginfo>(std::move(arglist));
+    auto forward = sym_->function()->forward;
+    auto impl = sym_->function()->node;
+    if (!(forward && impl))
         return errors.ok();
-    }
 
     // If we get here, we're a public and forward pair, and we need to compare
     // to make sure the argument lists are compatible.
@@ -1058,29 +1040,27 @@ FunctionDecl::BindArgs(SemaContext& sc)
     assert(sym_->function()->node);
     token_pos_t error_pos = sym_->function()->node->pos();
 
-    size_t fwd_argc = prev_args.size();
-    size_t impl_argc = arglist.size();
-    if (is_forward_)
-        std::swap(fwd_argc, impl_argc);
+    size_t fwd_argc = forward->args().size();
+    size_t impl_argc = impl->args().size();
 
     // We allow forwards to omit arguments in their signature, so this is not
     // a straight-up equality test.
-    if (impl_argc > fwd_argc) {
+    if (this == impl && impl_argc > fwd_argc) {
         report(error_pos, 25);
         return false;
     }
 
-    for (size_t i = 0; i < impl_argc; i++) {
-        if (!argcompare(&arglist[i], &prev_args[i]))
-            report(error_pos, 181) << arglist[i].name;
+    if (!sym_->function()->checked_one_signature) {
+        sym_->function()->checked_one_signature = true;
+        return errors.ok();
     }
-
-    // No matter what, always replace the canonical argument list with the
-    // implementation's. This is so names will bind correctly in CallExpr,
-    // though we should really kill off arglist entirely and use VarDecls.
-    if (is_public_)
-        new (&sym_->function()->args) PoolArray<arginfo>(std::move(arglist));
-
+    if (!sym_->function()->compared_prototype_args) {
+        for (size_t i = 0; i < impl_argc; i++) {
+            if (!argcompare(impl->args()[i], forward->args()[i]))
+                report(error_pos, 181) << impl->args()[i]->name();
+        }
+        sym_->function()->compared_prototype_args = true;
+    }
     return errors.ok();
 }
 
@@ -1100,8 +1080,8 @@ FunctionDecl::NameForOperator()
             report(pos_, 59) << var->name();
         count++;
 
-        auto type = gTypes.find(var->type().tag());
-        params.emplace_back(type->name());
+        auto type = CompileContext::get().types()->find(var->type().tag());
+        params.emplace_back(type->name()->str());
     }
 
     /* for '!', '++' and '--', count must be 1
@@ -1131,7 +1111,7 @@ FunctionDecl::NameForOperator()
 
     std::string name =
         "operator" + get_token_string(decl_.opertok) + "(" + ke::Join(params, ",") + ")";
-    return gAtoms.add(name);
+    return CompileContext::get().atom(name);
 }
 
 bool
@@ -1159,7 +1139,7 @@ EnumStructDecl::EnterNames(SemaContext& sc)
 
     AutoErrorPos error_pos(pos_);
     root_ = DefineConstant(sc, name_, pos_, 0, sGLOBAL, 0);
-    root_->tag = gTypes.defineEnumStruct(name_->chars(), root_)->tagid();
+    root_->tag = sc.cc().types()->defineEnumStruct(name_->chars(), root_)->tagid();
     root_->enumroot = true;
     root_->ident = iENUMSTRUCT;
 
@@ -1204,18 +1184,18 @@ EnumStructDecl::EnterNames(SemaContext& sc)
         }
         seen.emplace(field.decl.name);
 
-        symbol* child = new symbol(field.decl.name, position, iCONSTEXPR, sGLOBAL, root_->tag);
-        child->x.tags.index = field.decl.type.semantic_tag();
-        child->x.tags.field = 0;
-        child->dim.array.length = field.decl.type.numdim() ? field.decl.type.dim[0] : 0;
-        child->dim.array.level = 0;
-        child->set_parent(root_);
+        symbol* child = new symbol(field.decl.name, position, field.decl.type.ident, sGLOBAL,
+                                   field.decl.type.semantic_tag());
+        if (field.decl.type.numdim()) {
+            child->set_dim_count(1);
+            child->set_dim(0, field.decl.type.dim[0]);
+        }
         child->enumfield = true;
         fields.emplace_back(child);
 
         cell size = 1;
         if (field.decl.type.numdim()) {
-            size = field.decl.type.tag() == pc_tag_string
+            size = field.decl.type.tag() == sc.cc().types()->tag_string()
                    ? char_array_cells(field.decl.type.dim[0])
                    : field.decl.type.dim[0];
         }
@@ -1234,7 +1214,6 @@ EnumStructDecl::EnterNames(SemaContext& sc)
         seen.emplace(decl->name());
 
         auto sym = new symbol(decl->name(), 0, iFUNCTN, sGLOBAL, 0);
-        sym->set_parent(root_);
         decl->set_sym(sym);
         methods.emplace_back(sym);
     }
@@ -1260,6 +1239,8 @@ EnumStructDecl::Bind(SemaContext& sc)
         if (!inner_name)
             continue;
 
+        fun->sym()->function()->is_member_function = true;
+
         fun->set_name(inner_name);
         fun->set_this_tag(root_->tag);
         fun->Bind(sc);
@@ -1271,7 +1252,7 @@ sp::Atom*
 Decl::DecorateInnerName(sp::Atom* parent_name, sp::Atom* field_name)
 {
     auto full_name = ke::StringPrintf("%s.%s", parent_name->chars(), field_name->chars());
-    return gAtoms.add(full_name);
+    return CompileContext::get().atom(full_name);
 }
 
 bool
@@ -1279,12 +1260,15 @@ MethodmapDecl::EnterNames(SemaContext& sc)
 {
     AutoErrorPos error_pos(pos_);
 
-    auto old_spec = deduce_layout_spec_by_name(sc, name_);
-    if (!can_redef_layout_spec(Layout_MethodMap, old_spec))
-        report(110) << name_ << layout_spec_name(old_spec);
+    if (auto type = sc.cc().types()->find(name_)) {
+        if (!type->isEnum()) {
+            report(pos_, 432) << name_ << type->kindName();
+            return false;
+        }
+    }
 
-    map_ = methodmap_add(nullptr, Layout_MethodMap, name_);
-    gTypes.defineMethodmap(name_->chars(), map_);
+    map_ = methodmap_add(sc.cc(), nullptr, name_);
+    sc.cc().types()->defineMethodmap(name_->chars(), map_);
 
     sym_ = declare_methodmap_symbol(sc.cc(), map_);
     if (!sym_)
@@ -1367,17 +1351,15 @@ MethodmapDecl::Bind(SemaContext& sc)
 
         if (prop->getter && BindGetter(sc, prop)) {
             method->getter = prop->getter->sym();
-            method->getter->set_parent(sym_);
 
             auto name = ke::StringPrintf("%s.%s.get", name_->chars(), prop->name->chars());
-            method->getter->setName(gAtoms.add(name));
+            method->getter->setName(sc.cc().atom(name));
         }
         if (prop->setter && BindSetter(sc, prop)) {
             method->setter = prop->setter->sym();
-            method->setter->set_parent(sym_);
 
             auto name = ke::StringPrintf("%s.%s.set", name_->chars(), prop->name->chars());
-            method->setter->setName(gAtoms.add(name));
+            method->setter->setName(sc.cc().atom(name));
         }
     }
 
@@ -1407,7 +1389,7 @@ MethodmapDecl::Bind(SemaContext& sc)
         if (!method->decl->Bind(sc))
             continue;
 
-        method->decl->sym()->set_parent(sym_);
+        method->decl->sym()->function()->is_member_function = true;
         method->decl->sym()->setName(DecorateInnerName(name_, method->decl->decl_name()));
 
         auto m = method->entry;
@@ -1433,7 +1415,11 @@ MethodmapDecl::BindGetter(SemaContext& sc, MethodmapProperty* prop)
 
     fun->set_this_tag(map_->tag);
 
-    return fun->Bind(sc);
+    if (!fun->Bind(sc))
+        return false;
+
+    fun->sym()->function()->is_member_function = true;
+    return true;
 }
 
 bool
@@ -1451,6 +1437,8 @@ MethodmapDecl::BindSetter(SemaContext& sc, MethodmapProperty* prop)
 
     if (!fun->Bind(sc))
         return false;
+
+    fun->sym()->function()->is_member_function = true;
 
     if (fun->args().size() <= 1) {
         report(prop->pos, 150) << pc_tagname(prop->type.tag());

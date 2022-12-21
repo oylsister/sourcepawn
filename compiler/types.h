@@ -39,21 +39,44 @@
 typedef int32_t cell;
 typedef uint32_t ucell;
 
-#define TAGTYPEMASK (0x3E000000)
-#define TAGFLAGMASK (TAGTYPEMASK | 0x40000000)
-
-enum class TypeKind : uint32_t {
-    None,
-    EnumStruct = 0x01000000,
-    Struct = 0x02000000,
-    Methodmap = 0x04000000,
-    Enum = 0x08000000,
-    Object = 0x10000000,
-    Function = 0x20000000
+// Possible entries for "ident". These are used in the "symbol", "value"
+// and arginfo structures. Not every constant is valid for every use.
+// In an argument list, the list is terminated with a "zero" ident; labels
+// cannot be passed as function arguments, so the value 0 is overloaded.
+enum IdentifierKind {
+    iINVALID = 0,
+    iVARIABLE = 1,      /* cell that has an address and that can be fetched directly (lvalue) */
+    iREFERENCE = 2,     /* iVARIABLE, but must be dereferenced */
+    iARRAY = 3,
+    iREFARRAY = 4,      /* an array passed by reference (i.e. a pointer) */
+    iARRAYCELL = 5,     /* array element, cell that must be fetched indirectly */
+    iARRAYCHAR = 6,     /* array element, character from cell from array */
+    iEXPRESSION = 7,    /* expression result, has no address (rvalue) */
+    iCONSTEXPR = 8,     /* constant expression (or constant symbol) */
+    iFUNCTN = 9,
+    iVARARGS = 11,      /* function specified ... as argument(s) */
+    iACCESSOR = 13,     /* property accessor via a methodmap_method_t */
+    iMETHODMAP = 14,    /* symbol defining a methodmap */
+    iENUMSTRUCT = 15,   /* symbol defining an enumstruct */
+    iSCOPE = 16,        /* local scope chain */
 };
-KE_DEFINE_ENUM_OPERATORS(TypeKind)
 
-struct pstruct_t;
+enum class TypeKind : uint8_t {
+    Int,
+    Object,
+    Null,
+    Function,
+    Any,
+    Void,
+    Float,
+    Bool,
+    String,
+    EnumStruct,
+    Struct,
+    Methodmap,
+    Enum,
+};
+
 struct funcenum_t;
 struct methodmap_t;
 struct symbol;
@@ -90,7 +113,7 @@ struct typeinfo_t {
       : type_atom(nullptr),
         tag_(-1),
         declared_tag(0),
-        ident(0),
+        ident(iINVALID),
         is_const(false),
         is_new(false),
         has_postdims(false),
@@ -111,7 +134,7 @@ struct typeinfo_t {
     // rewritten for desugaring.
     int declared_tag;
 
-    int ident : 5;          // Either iREFERENCE, iARRAY, or iVARIABLE.
+    IdentifierKind ident : 6;  // Either iREFERENCE, iARRAY, or iVARIABLE.
     bool is_const : 1;
     bool is_new : 1;        // New-style declaration.
     bool has_postdims : 1;  // Dimensions, if present, were in postfix position.
@@ -173,47 +196,60 @@ struct functag_t : public PoolObject
     PoolArray<funcarg_t> args;
 };
 
+struct structarg_t : public PoolObject
+{
+    structarg_t()
+      : type(),
+        name(nullptr),
+        offs(0),
+        index(0)
+    {}
+
+    typeinfo_t type;
+    sp::Atom* name;
+    unsigned int offs;
+    int index;
+};
+
 class Type : public PoolObject
 {
     friend class TypeDictionary;
 
   public:
-    Type(sp::Atom* name, cell value);
+    Type(sp::Atom* name, TypeKind kind);
 
-    const char* name() const {
-        return name_->chars();
+    sp::Atom* name() const {
+        return name_;
     }
     sp::Atom* nameAtom() const { return name_; }
     TypeKind kind() const { return kind_; }
     const char* kindName() const;
     const char* prettyName() const;
-    cell smx_export_value() const {
-        return value_ | int(kind_) | fixed_;
-    }
     int tagid() const {
         return value_;
     }
 
-    bool isDeclaredButNotDefined() const;
-    bool isDefinedType() const {
-        return kind_ != TypeKind::None;
+    bool isFixed() const {
+        return fixed_;
     }
 
-    bool isFixed() const {
-        return !!fixed_;
+    template <class T> T* as() {
+        if (T::is_a(this))
+            return reinterpret_cast<T*>(this);
+        return nullptr;
+    }
+    template <class T> T* to() {
+        assert(T::is_a(this));
+        return reinterpret_cast<T*>(this);
     }
 
     bool isStruct() const {
         return kind_ == TypeKind::Struct;
     }
-    pstruct_t* asStruct() const {
-        if (!isStruct())
-            return nullptr;
-        return pstruct_ptr_;
-    }
 
     void setMethodmap(methodmap_t* map) {
         setFixed();
+        assert(kind_ == TypeKind::Methodmap || kind_ == TypeKind::Enum);
         kind_ = TypeKind::Methodmap;
         methodmap_ptr_ = map;
     }
@@ -245,7 +281,6 @@ class Type : public PoolObject
         return methodmap_ptr_;
     }
 
-    bool isLabelTag() const;
     bool isEnum() const {
         return kind_ == TypeKind::Enum;
     }
@@ -262,32 +297,24 @@ class Type : public PoolObject
   private:
     void setFunction(funcenum_t* func) {
         setFixed();
-        kind_ = TypeKind::Function;
+        assert(kind_ == TypeKind::Function);
         funcenum_ptr_ = func;
     }
     void setObject() {
         setFixed();
-        kind_ = TypeKind::Object;
-    }
-    void setEnumTag() {
-        kind_ = TypeKind::Enum;
+        assert(kind_ == TypeKind::Object);
     }
     void setEnumStruct(symbol* sym) {
         setFixed();
-        kind_ = TypeKind::EnumStruct;
+        assert(kind_ == TypeKind::EnumStruct);
         enumstruct_ptr_ = sym;
-    }
-    void setStruct(pstruct_t* ptr) {
-        setFixed();
-        kind_ = TypeKind::Struct;
-        pstruct_ptr_ = ptr;
     }
     void setFixed() {
         // This is separate from "kind_" because it persists across passes.
-        fixed_ = 0x40000000;
+        fixed_ = true;
     }
-    void setIntrinsic() {
-        intrinsic_ = true;
+    void set_tag(int tagid) {
+        value_ = tagid;
     }
 
     void resetPtr();
@@ -295,15 +322,12 @@ class Type : public PoolObject
   private:
     sp::Atom* name_;
     cell value_;
-    int fixed_;
-    bool intrinsic_;
-    TypeKind first_pass_kind_;
+    bool fixed_;
 
     // These are reset in between the first and second passes, since the
     // underlying structures are reparsed.
     TypeKind kind_;
     union {
-        pstruct_t* pstruct_ptr_;
         funcenum_t* funcenum_ptr_;
         methodmap_t* methodmap_ptr_;
         symbol* enumstruct_ptr_;
@@ -311,20 +335,34 @@ class Type : public PoolObject
     };
 };
 
+class pstruct_t : public Type
+{
+  public:
+    explicit pstruct_t(sp::Atom* name)
+      : Type(name, TypeKind::Struct)
+    {}
+
+    const structarg_t* GetArg(sp::Atom* name) const;
+
+    static bool is_a(Type* type) { return type->kind() == TypeKind::Struct; }
+
+    PoolArray<structarg_t*> args;
+};
+
+
 class TypeDictionary
 {
   public:
-    TypeDictionary();
+    explicit TypeDictionary(CompileContext& cc);
 
     Type* find(int tag);
     Type* find(sp::Atom* name);
 
     void init();
-    void clearExtendedTypes();
-    void clear();
 
+    Type* defineInt();
     Type* defineAny();
-    Type* defineFunction(const char* name, funcenum_t* fe);
+    Type* defineFunction(sp::Atom* name, funcenum_t* fe);
     Type* defineTypedef(const char* name, Type* other);
     Type* defineString();
     Type* defineFloat();
@@ -334,8 +372,8 @@ class TypeDictionary
     Type* defineMethodmap(const char* name, methodmap_t* map);
     Type* defineEnumTag(const char* name);
     Type* defineEnumStruct(const char* name, symbol* sym);
-    Type* defineTag(const char* name);
-    Type* definePStruct(const char* name, pstruct_t* ps);
+    Type* defineTag(sp::Atom* atom);
+    pstruct_t* definePStruct(sp::Atom* name);
 
     template <typename T>
     void forEachType(const T& callback) {
@@ -343,28 +381,47 @@ class TypeDictionary
             callback(type);
     }
 
-    int tag_nullfunc() const { return tag_nullfunc_; }
-    int tag_object() const { return tag_object_; }
-    int tag_null() const { return tag_null_; }
-    int tag_function() const { return tag_function_; }
-    int tag_any() const { return tag_any_; }
-    int tag_void() const { return tag_void_; }
+    Type* type_nullfunc() const { return type_nullfunc_; }
+    Type* type_object() const { return type_object_; }
+    Type* type_null() const { return type_null_; }
+    Type* type_function() const { return type_function_; }
+    Type* type_any() const { return type_any_; }
+    Type* type_void() const { return type_void_; }
+    Type* type_float() const { return type_float_; }
+    Type* type_bool() const { return type_bool_; }
+    Type* type_string() const { return type_string_; }
+
+    int tag_nullfunc() const { return type_nullfunc_->tagid(); }
+    int tag_object() const { return type_object_->tagid(); }
+    int tag_null() const { return type_null_->tagid(); }
+    int tag_function() const { return type_function_->tagid(); }
+    int tag_any() const { return type_any_->tagid(); }
+    int tag_void() const { return type_void_->tagid(); }
+    int tag_float() const { return type_float_->tagid(); }
+    int tag_bool() const { return type_bool_->tagid(); }
+    int tag_string() const { return type_string_->tagid(); }
 
   private:
-    Type* findOrAdd(const char* name);
+    Type* add(const char* name, TypeKind kind);
+    Type* add(sp::Atom* name, TypeKind kind);
+    void RegisterType(Type* type);
 
   private:
-    tr::vector<Type*> types_;
-    int tag_nullfunc_ = -1;
-    int tag_object_ = -1;
-    int tag_null_ = -1;
-    int tag_function_ = -1;
-    int tag_any_ = -1;
-    int tag_void_ = -1;
+    CompileContext& cc_;
+    tr::unordered_map<sp::Atom*, Type*> types_;
+    tr::unordered_map<int, Type*> tags_;
+    Type* type_int_ = nullptr;
+    Type* type_nullfunc_ = nullptr;
+    Type* type_object_ = nullptr;
+    Type* type_null_ = nullptr;
+    Type* type_function_ = nullptr;
+    Type* type_any_ = nullptr;
+    Type* type_void_ = nullptr;
+    Type* type_float_ = nullptr;
+    Type* type_bool_ = nullptr;
+    Type* type_string_ = nullptr;
 };
 
 const char* pc_tagname(int tag);
-
-extern TypeDictionary gTypes;
 
 #endif // _INCLUDE_SOURCEPAWN_COMPILER_TYPES_H_

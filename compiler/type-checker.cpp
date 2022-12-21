@@ -29,29 +29,11 @@ TypeInfoFromSymbol(symbol* sym)
 
     type.set_tag(sym->tag);
     type.is_const = sym->is_const;
-
-    if (sym->parent() && sym->parent()->ident == iENUMSTRUCT) {
-        if (sym->dim.array.length) {
-            type.ident = iARRAY;
-            type.dim.emplace_back(sym->dim.array.length);
-        } else {
-            type.ident = iVARIABLE;
-        }
-        type.set_tag(sym->x.tags.index);
-    } else {
-        type.ident = sym->ident;
-
-        if (sym->ident == iARRAY || sym->ident == iREFARRAY) {
-            for (symbol* iter = sym; iter; iter = iter->array_child()) {
-                if (iter->x.tags.index && iter->dim.array.level == 0)
-                    type.declared_tag = iter->x.tags.index;
-                if (iter->x.tags.index) {
-                    type.declared_tag = iter->x.tags.index;
-                    type.set_tag(0);
-                }
-                type.dim.emplace_back(iter->dim.array.length);
-            }
-        }
+    type.ident = sym->ident;
+    if (sym->ident == iARRAY || sym->ident == iREFARRAY) {
+        for (int i = 0; i < sym->dim_count(); i++)
+            type.dim.emplace_back(sym->dim(i));
+        type.declared_tag = sym->semantic_tag;
     }
     return type;
 }

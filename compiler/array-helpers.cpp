@@ -33,7 +33,7 @@
 class ArraySizeResolver
 {
   public:
-    ArraySizeResolver(Semantics* sema, VarDecl* decl);
+    ArraySizeResolver(Semantics* sema, VarDeclBase* decl);
     ArraySizeResolver(Semantics* sema, const token_pos_t& pos, typeinfo_t* type, int vclass);
 
     void Resolve();
@@ -47,6 +47,7 @@ class ArraySizeResolver
 
   private:
     Semantics* sema_;
+    TypeDictionary* types_;
     const token_pos_t& pos_;
     typeinfo_t* type_;
     Expr* initializer_;
@@ -59,8 +60,9 @@ class ArraySizeResolver
 static constexpr int kSizeUnknown = -1;
 static constexpr int kSizeIndeterminate = -2;
 
-ArraySizeResolver::ArraySizeResolver(Semantics* sema, VarDecl* decl)
+ArraySizeResolver::ArraySizeResolver(Semantics* sema, VarDeclBase* decl)
   : sema_(sema),
+    types_(sema->cc().types()),
     pos_(decl->pos()),
     type_(decl->mutable_type()),
     initializer_(decl->init_rhs()),
@@ -68,7 +70,7 @@ ArraySizeResolver::ArraySizeResolver(Semantics* sema, VarDecl* decl)
     vclass_(decl->vclass()),
     es_(nullptr)
 {
-    Type* type = gTypes.find(type_->semantic_tag());
+    Type* type = types_->find(type_->semantic_tag());
     if (type->isEnumStruct())
         es_ = type;
 }
@@ -283,7 +285,7 @@ ArraySizeResolver::ResolveDimExprs()
             return false;
 
         if (!is_valid_index_tag(v.tag)) {
-            error(expr->pos(), 77, gTypes.find(v.tag)->prettyName());
+            error(expr->pos(), 77, types_->find(v.tag)->prettyName());
             return false;
         }
 
@@ -306,16 +308,16 @@ ArraySizeResolver::ResolveDimExprs()
 
             // The array type must automatically become iREFARRAY.
             type_->ident = iREFARRAY;
-        } else if (IsLegacyEnumTag(sema_->current_scope(), v.tag) && v.sym && !v.sym->parent()) {
+        } else if (IsLegacyEnumTag(sema_->current_scope(), v.tag) && v.sym && v.sym->enumroot) {
             error(expr->pos(), 153);
             return false;
         } else {
             // Constant must be > 0.
-            if (v.constval <= 0) {
+            if (v.constval() <= 0) {
                 error(expr->pos(), 9);
                 return false;
             }
-            type_->dim[i] = v.constval;
+            type_->dim[i] = v.constval();
         }
     }
     return true;
@@ -335,11 +337,10 @@ ArraySizeResolver::ResolveDimExpr(Expr* expr, value* v)
         //
         // For backward compatibility with a huge number of plugins.
         auto sym = sym_expr->sym();
-        auto type = gTypes.find(sym->tag);
+        auto type = types_->find(sym->tag);
         if (sym->enumroot && !type->asEnumStruct() && sym->ident == iCONSTEXPR) {
             *v = {};
-            v->ident = iCONSTEXPR;
-            v->constval = sym->addr();
+            v->set_constval(sym->addr());
             return true;
         }
     }
@@ -352,7 +353,7 @@ ArraySizeResolver::ResolveDimExpr(Expr* expr, value* v)
 }
 
 void
-ResolveArraySize(Semantics* sema, VarDecl* decl)
+ResolveArraySize(Semantics* sema, VarDeclBase* decl)
 {
     assert(decl->type().ident == iARRAY);
 
@@ -372,8 +373,9 @@ ResolveArraySize(Semantics* sema, const token_pos_t& pos, typeinfo_t* type, int 
 class FixedArrayValidator final
 {
   public:
-    FixedArrayValidator(Semantics* sema, VarDecl* decl)
+    FixedArrayValidator(Semantics* sema, VarDeclBase* decl)
       : sema_(sema),
+        types_(sema->cc().types()),
         decl_(decl),
         pos_(decl->pos()),
         init_(decl->init_rhs()),
@@ -384,6 +386,7 @@ class FixedArrayValidator final
 
     FixedArrayValidator(Semantics* sema, const typeinfo_t& type, Expr* init)
       : sema_(sema),
+        types_(sema->cc().types()),
         decl_(nullptr),
         pos_(init->pos()),
         init_(init),
@@ -401,7 +404,8 @@ class FixedArrayValidator final
 
   private:
     Semantics* sema_;
-    VarDecl* decl_;
+    TypeDictionary* types_;
+    VarDeclBase* decl_;
     token_pos_t pos_;
     Expr* init_;
     const typeinfo_t& type_;
@@ -421,7 +425,7 @@ CheckArrayInitialization(Semantics* sema, const typeinfo_t& type, Expr* init)
 bool
 FixedArrayValidator::Validate()
 {
-    Type* type = gTypes.find(type_.semantic_tag());
+    Type* type = types_->find(type_.semantic_tag());
     if (type->isEnumStruct())
         es_ = type;
 
@@ -466,19 +470,19 @@ FixedArrayValidator::Validate()
 cell
 CalcArraySize(symbol* sym)
 {
+    auto types = CompileContext::get().types();
+
     cell size = 0;
     cell last_size = 1;
-    symbol* iter = sym;
-    while (iter) {
-        cell length = iter->dim.array.length;
+    for (int i = 0; i < sym->dim_count(); i++) {
+        cell length = sym->dim(i);
         assert(length);
 
-        if (!iter->dim.array.level && sym->tag == pc_tag_string)
+        if (i == sym->dim_count() - 1 && sym->tag == types->tag_string())
             length = char_array_cells(length);
 
         last_size *= length;
         size += last_size;
-        iter = iter->array_child();
     }
     return size;
 }
@@ -511,11 +515,8 @@ FixedArrayValidator::CheckArgument(Expr* init)
     }
 
     std::vector<int> dim;
-    while (sym) {
-        dim.emplace_back(sym->dim.array.length);
-        sym = sym->array_child();
-    }
-    assert(!sym);
+    for (int i = 0; i < sym->dim_count(); i++)
+        dim.emplace_back(sym->dim(i));
 
     if (dim.size() != type_.dim.size()) {
         report(expr->pos(), 19) << type_.numdim() << dim.size();
@@ -570,9 +571,9 @@ FixedArrayValidator::ValidateRank(int rank, Expr* init)
     }
 
     if (StringExpr* str = init->as<StringExpr>()) {
-        if (type_.tag() != pc_tag_string) {
-            error(init->pos(), 134, gTypes.find(pc_tag_string)->prettyName(),
-                  gTypes.find(type_.tag())->prettyName());
+        if (type_.tag() != types_->tag_string()) {
+            error(init->pos(), 134, types_->find(types_->tag_string())->prettyName(),
+                  types_->find(type_.tag())->prettyName());
             return false;
         }
 
@@ -587,7 +588,7 @@ FixedArrayValidator::ValidateRank(int rank, Expr* init)
         return true;
     }
 
-    cell rank_size = (type_.tag() == pc_tag_string && type_.dim[rank])
+    cell rank_size = (type_.tag() == types_->tag_string() && type_.dim[rank])
                      ? char_array_cells(type_.dim[rank])
                      : type_.dim[rank];
 
@@ -645,7 +646,7 @@ FixedArrayValidator::ValidateRank(int rank, Expr* init)
         matchtag(type_.tag(), v.tag, MATCHTAG_COERCE);
 
         prev2 = prev1;
-        prev1 = ke::Some(v.constval);
+        prev1 = ke::Some(v.constval());
     }
 
     cell ncells = rank_size ? rank_size : array->exprs().size();
@@ -716,7 +717,7 @@ FixedArrayValidator::ValidateEnumStruct(Expr* init)
                 continue;
             }
 
-            matchtag(field->x.tags.index, v.tag, MATCHTAG_COERCE | MATCHTAG_ENUM_ASSN);
+            matchtag(field->tag, v.tag, MATCHTAG_COERCE | MATCHTAG_ENUM_ASSN);
         }
     }
 
@@ -744,11 +745,11 @@ FixedArrayValidator::AddCells(size_t ncells)
 }
 
 bool
-Semantics::AddImplicitDynamicInitializer(VarDecl* decl)
+Semantics::AddImplicitDynamicInitializer(VarDeclBase* decl)
 {
     // Enum structs should be impossible here.
     typeinfo_t* type = decl->mutable_type();
-    assert(!gTypes.find(type->tag())->asEnumStruct());
+    assert(!types_->find(type->tag())->asEnumStruct());
 
     // If any one rank was dynamic, the entire array is considered dynamic. For
     // new-style fixed arrays we've thrown an error at this point. For old
@@ -787,7 +788,7 @@ Semantics::AddImplicitDynamicInitializer(VarDecl* decl)
     return true;
 }
 
-bool Semantics::CheckArrayDeclaration(VarDecl* decl) {
+bool Semantics::CheckArrayDeclaration(VarDeclBase* decl) {
     AutoCountErrors errors;
     const auto& type = decl->type();
     if (type.ident == iARRAY || decl->vclass() == sARGUMENT) {
@@ -841,7 +842,7 @@ bool Semantics::CheckArrayDeclaration(VarDecl* decl) {
     }
 
     size_t expected_dims = type.numdim();
-    if (gTypes.find(type.semantic_tag())->isEnumStruct())
+    if (types_->find(type.semantic_tag())->isEnumStruct())
         expected_dims--;
     if (expected_dims != ctor->exprs().size()) {
         error(19, (int)expected_dims, (int)ctor->exprs().size());
@@ -860,7 +861,7 @@ class ArrayEmitter final
         init_(init),
         pending_zeroes_(0)
     {
-        Type* t = gTypes.find(type.semantic_tag());
+        Type* t = CompileContext::get().types()->find(type.semantic_tag());
         if (t->asEnumStruct())
             es_ = t;
     }
@@ -969,7 +970,7 @@ ArrayEmitter::Emit(int rank, Expr* init)
                 symbol* field = *field_iter;
                 assert(field);
 
-                EmitPadding(field->dim.array.length, field->x.tags.index, emitted, false, {}, {});
+                EmitPadding(field->dim(0), field->tag, emitted, false, {}, {});
             } else if (ArrayExpr* expr = item->as<ArrayExpr>()) {
                 // Subarrays can only appear in an enum struct. Normal 2D cases
                 // would flow through the check at the start of this function.
@@ -978,13 +979,13 @@ ArrayEmitter::Emit(int rank, Expr* init)
                 AddInlineArray(field, expr);
             } else {
                 assert(item->val().ident == iCONSTEXPR);
-                add_data(item->val().constval);
+                add_data(item->val().constval());
                 prev2 = prev1;
-                prev1 = ke::Some(item->val().constval);
+                prev1 = ke::Some(item->val().constval());
             }
 
             if (field_list) {
-                assert(field_iter != field_list->end() && (*field_iter)->ident == iCONSTEXPR);
+                assert(field_iter != field_list->end());
                 field_iter++;
             }
         }
@@ -1009,12 +1010,12 @@ ArrayEmitter::AddInlineArray(symbol* field, ArrayExpr* array)
 
     for (const auto& item : array->exprs()) {
         assert(item->val().ident == iCONSTEXPR);
-        add_data(item->val().constval);
+        add_data(item->val().constval());
         prev2 = prev1;
-        prev1 = ke::Some(item->val().constval);
+        prev1 = ke::Some(item->val().constval());
     }
 
-    EmitPadding(field->dim.array.length, field->x.tags.index, array->exprs().size(),
+    EmitPadding(field->dim(0), field->tag, array->exprs().size(),
                 array->ellipses(), prev1, prev2);
 }
 
@@ -1023,7 +1024,7 @@ ArrayEmitter::EmitPadding(size_t rank_size, int tag, size_t emitted, bool ellips
                           const ke::Maybe<cell> prev1, const ke::Maybe<cell> prev2)
 {
     // Pad remainder to zeroes if the array was explicitly sized.
-    if (tag == pc_tag_string)
+    if (tag == CompileContext::get().types()->tag_string())
         rank_size = char_array_cells(rank_size);
 
     if (rank_size > emitted) {
@@ -1083,7 +1084,7 @@ BuildArrayInitializer(const typeinfo_t& type, Expr* init, ArrayData* array)
 }
 
 void
-BuildArrayInitializer(VarDecl* decl, ArrayData* array, cell base_address)
+BuildArrayInitializer(VarDeclBase* decl, ArrayData* array, cell base_address)
 {
     BuildArrayInitializer(decl->type(), decl->init_rhs(), array);
 

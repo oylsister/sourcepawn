@@ -55,7 +55,6 @@
 #include "sc.h"
 #include "sci18n.h"
 #include "sctracker.h"
-#include "scvars.h"
 #include "semantics.h"
 #include "source-manager.h"
 #include "symbols.h"
@@ -270,10 +269,7 @@ Lexer::SynthesizeIncludePathToken()
  *     you should write "6.0"
  */
 void Lexer::lex_float(full_token_t* tok, cell_t whole) {
-    unsigned long dbase = 1;
-
     double fnum = whole;
-    unsigned long dnum = whole;
 
     double ffrac = 0.0;
     double fmult = 1.0;
@@ -285,8 +281,6 @@ void Lexer::lex_float(full_token_t* tok, cell_t whole) {
         if (c != '_') {
             ffrac = (ffrac * 10.0) + (c - '0');
             fmult = fmult / 10.0;
-            dbase /= 10L;
-            dnum += (c - '0') * dbase;
         }
     }
     fnum += ffrac * fmult; /* form the number so far */
@@ -309,7 +303,6 @@ void Lexer::lex_float(full_token_t* tok, cell_t whole) {
             error(425);
         fmult = pow(10.0, exp * sign);
         fnum *= fmult;
-        dnum *= (unsigned long)(fmult + 0.5);
     }
 
     /* floating point */
@@ -319,7 +312,7 @@ void Lexer::lex_float(full_token_t* tok, cell_t whole) {
 }
 
 int Lexer::preproc_expr(cell* val, int* tag) {
-    ke::SaveAndSet<bool> forbid_const(&Parser::sInPreprocessor, true);
+    ke::SaveAndSet<bool> forbid_const(&cc_.in_preprocessor(), true);
     return Parser::PreprocExpr(val, tag); /* get value (or 0 on error) */
 }
 
@@ -406,7 +399,7 @@ void Lexer::HandleDirectives() {
         }
         case tpASSERT:
         {
-            ke::SaveAndSet<bool> reset(&Parser::sDetectedIllegalPreprocessorSymbols, false);
+            ke::SaveAndSet<bool> reset(&cc_.detected_illegal_preproc_symbols(), false);
 
             cell val = 0;
             preproc_expr(&val, NULL); /* get constant expression (or 0 on error) */
@@ -1227,7 +1220,7 @@ Lexer::Lexer(CompileContext& cc)
     const int kStart = tMIDDLE + 1;
     const char** tokptr = &sc_tokens[kStart - tFIRST];
     for (int i = kStart; i <= tLAST; i++, tokptr++) {
-        sp::Atom* atom = gAtoms.add(*tokptr);
+        sp::Atom* atom = cc_.atom(*tokptr);
         assert(keywords_.count(atom) == 0);
         keywords_.emplace(atom, i);
     }
@@ -1239,8 +1232,8 @@ void Lexer::Init(std::shared_ptr<SourceFile> sf) {
 }
 
 void Lexer::Start() {
-    defined_atom_ = gAtoms.add("defined");
-    line_atom_ = gAtoms.add("__LINE__");
+    defined_atom_ = cc_.atom("defined");
+    line_atom_ = cc_.atom("__LINE__");
 }
 
 std::string get_token_string(int tok_id) {
@@ -1763,7 +1756,7 @@ void Lexer::LexSymbolOrKeyword(full_token_t* tok) {
     }
 
     // Handle preprocessor keywords (ugh).
-    sp::Atom* atom = gAtoms.add((const char *)token_start, len);
+    sp::Atom* atom = cc_.atom((const char *)token_start, len);
     if (atom == defined_atom_) {
         tok->id = tDEFINED;
         return;
@@ -1805,7 +1798,7 @@ void Lexer::LexSymbol(full_token_t* tok, sp::Atom* atom) {
         if (allow_tags_) {
             tok->id = tLABEL;
             advance();
-        } else if (gTypes.find(atom)) {
+        } else if (cc_.types()->find(atom)) {
             // This looks like a tag override (a tag with this name exists), but
             // tags are not allowed right now, so it is probably an error.
             error(220);
@@ -2236,7 +2229,7 @@ bool
 Lexer::needsymbol(sp::Atom** name)
 {
     if (!need(tSYMBOL)) {
-        *name = gAtoms.add("__unknown__");
+        *name = cc_.atom("__unknown__");
         return false;
     }
     *name = current_token()->atom;
@@ -2244,7 +2237,7 @@ Lexer::needsymbol(sp::Atom** name)
 }
 
 void Lexer::AddMacro(const char* pattern, const char* subst) {
-    auto atom = gAtoms.add(pattern);
+    auto atom = cc_.atom(pattern);
     auto macro = std::make_shared<MacroEntry>();
     macro->pattern = atom;
     macro->substitute = subst;
@@ -2274,29 +2267,29 @@ void
 declare_handle_intrinsics()
 {
     // Must not have an existing Handle methodmap.
-    sp::Atom* handle_atom = gAtoms.add("Handle");
+    auto& cc = CompileContext::get();
+    sp::Atom* handle_atom = cc.atom("Handle");
     if (methodmap_find_by_name(handle_atom)) {
         error(156);
         return;
     }
 
-    methodmap_t* map = methodmap_add(nullptr, Layout_MethodMap, handle_atom);
+    methodmap_t* map = methodmap_add(cc, nullptr, handle_atom);
     map->nullable = true;
 
-    auto& cc = CompileContext::get();
     declare_methodmap_symbol(cc, map);
 
-    auto atom = gAtoms.add("CloseHandle");
+    auto atom = cc.atom("CloseHandle");
     if (auto sym = FindSymbol(cc.globals(), atom)) {
         auto dtor = new methodmap_method_t(map);
         dtor->target = sym;
-        dtor->name = gAtoms.add("~Handle");
+        dtor->name = cc.atom("~Handle");
         map->dtor = dtor;
         map->methods.emplace(dtor->name, dtor);
 
         auto close = new methodmap_method_t(map);
         close->target = sym;
-        close->name = gAtoms.add("Close");
+        close->name = cc.atom("Close");
         map->methods.emplace(close->name, close);
     }
 
