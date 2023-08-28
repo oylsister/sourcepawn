@@ -76,12 +76,12 @@ class ParseNode : public PoolObject
     void set_tree_has_heap_allocs(bool b) { tree_has_heap_allocs_ = b; }
 
   protected:
-    void error(const token_pos_t& pos, int number, ...);
+    void error(const token_pos_t& pos, int number);
 
   private:
     // Hide this symbol. Calls to error(pos... will get more accurate as we
     // make adjustments.
-    void error(int number, ...) = delete;
+    void error(int number) = delete;
 
   protected:
     token_pos_t pos_;
@@ -118,7 +118,7 @@ class Stmt : public ParseNode
     FlowType flow_type() const { return flow_type_; }
     void set_flow_type(FlowType type) { flow_type_ = type; }
 
-    bool IsTerminal() const { return flow_type() != Flow_None; }
+    bool IsTerminal() const;
 
     StmtKind kind() const { return kind_; }
     bool is(StmtKind k) const { return kind() == k; }

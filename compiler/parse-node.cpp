@@ -49,12 +49,9 @@ Expr* VarDeclBase::init_rhs() const {
 }
 
 void
-ParseNode::error(const token_pos_t& pos, int number, ...)
+ParseNode::error(const token_pos_t& pos, int number)
 {
-    va_list ap;
-    va_start(ap, number);
-    error_va(pos, number, ap);
-    va_end(ap);
+    report(pos, number);
 }
 
 void
@@ -71,6 +68,17 @@ LogicalExpr::FlattenLogical(int token, std::vector<Expr*>* out)
         right_->FlattenLogical(token, out);
     } else {
         Expr::FlattenLogical(token, out);
+    }
+}
+
+bool Stmt::IsTerminal() const {
+    switch (flow_type()) {
+        case Flow_Break:
+        case Flow_Continue:
+        case Flow_Return:
+            return true;
+        default:
+            return false;
     }
 }
 

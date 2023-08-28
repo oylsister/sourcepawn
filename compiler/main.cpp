@@ -64,10 +64,10 @@
 #endif
 
 #include <time.h>
-#if defined(SOURCEMOD_BUILD)
-#    include <sourcemod_version.h>
-#    define SOURCEPAWN_VERSION SOURCEMOD_VERSION
-#endif
+
+// Hack to build under SourceMod. This should be cleaned up at some point.
+#undef SM_USE_VERSIONLIB
+#include <sourcemod_version.h>
 
 #ifdef __EMSCRIPTEN__
 #    include <emscripten.h>
@@ -120,10 +120,6 @@ int RunCompiler(int argc, char** argv, CompileContext& cc) {
 
     auto options = cc.options();
 
-    for (const auto& pair : options->constants) {
-        DefineConstant(cc, cc.atom(pair.first), pair.second, sGLOBAL);
-    }
-
 #ifdef __EMSCRIPTEN__
     setup_emscripten_fs();
 #endif
@@ -146,6 +142,10 @@ int RunCompiler(int argc, char** argv, CompileContext& cc) {
     }
 
     cc.lexer()->Init(cc.inpf_org());
+
+    for (const auto& pair : options->predefines) {
+        cc.lexer().get()->AddMacro(pair.first.c_str(), pair.second.c_str());
+    }
 
     setconstants(); /* set predefined constants and tagnames */
 
@@ -376,7 +376,7 @@ setconfig(char* root)
 }
 
 void setcaption() {
-    printf("SourcePawn Compiler %s\n", SOURCEPAWN_VERSION);
+    printf("SourcePawn Compiler %s\n", SM_VERSION_STRING);
     printf("Copyright (c) 1997-2006 ITB CompuPhase\n");
     printf("Copyright (c) 2004-2021 AlliedModders LLC\n\n");
 }

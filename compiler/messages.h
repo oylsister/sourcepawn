@@ -256,7 +256,7 @@ static const char* warnmsg[] = {
     /*228*/ "enum multiplers are deprecated and will be removed in the next release\n",
     /*229*/ "index tag mismatch (symbol \"%s\")\n",
     /*230*/ "symbol \"%s\" is not a preprocessor symbol; this behavior is undefined and will be removed in the future\n",
-    /*231*/ "unused231\n",
+    /*231*/ "sub-expression at position %d has no effect; comma expression only returns last value\n",
     /*232*/ "output file is written, but with compact encoding disabled\n",
     /*233*/ "unused233\n",
     /*234*/ "symbol \"%s\" is marked as deprecated: %s\n",
@@ -314,4 +314,8 @@ static const char* errmsg_ex[] = {
     /*430*/ "invalid macro definition\n",
     /*431*/ "script uses too much memory, cannot compile\n",
     /*432*/ "type %s was already declared as %s\n",
+    /*433*/ "struct variable must have struct initializer\n",
+    /*434*/ "constructor cannot have a return type\n",
+    /*435*/ "can't get current working directory\n",
+    /*436*/ "wrong number of dimensions, expected %d got %d\n",
 };
